@@ -35,4 +35,17 @@ describe("Button", () => {
     render(<Button disabled>Disabled</Button>);
     expect(screen.getByRole("button")).toBeDisabled();
   });
+
+  it("shows spinner and disables when loading", () => {
+    render(<Button loading>Loading</Button>);
+    const button = screen.getByRole("button");
+    expect(button).toBeDisabled();
+    expect(button.querySelector("svg")).toBeInTheDocument();
+  });
+
+  it("shows spinner alongside text when loading", () => {
+    render(<Button loading>Submit</Button>);
+    expect(screen.getByText("Submit")).toBeInTheDocument();
+    expect(screen.getByRole("button").querySelector("svg")).toBeInTheDocument();
+  });
 });

@@ -27,6 +27,7 @@ export default function ProfilesPage() {
   const [launchPort, setLaunchPort] = useState("9868");
   const [launchHeadless, setLaunchHeadless] = useState(false);
   const [launchError, setLaunchError] = useState("");
+  const [launchLoading, setLaunchLoading] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState("");
 
   const loadProfiles = async () => {
@@ -67,8 +68,9 @@ export default function ProfilesPage() {
   };
 
   const handleLaunch = async () => {
-    if (!showLaunch) return;
+    if (!showLaunch || launchLoading) return;
     setLaunchError("");
+    setLaunchLoading(true);
     try {
       const payload = {
         name: showLaunch,
@@ -88,6 +90,8 @@ export default function ProfilesPage() {
       console.error("Launch failed:", e);
       const msg = e instanceof Error ? e.message : "Failed to launch instance";
       setLaunchError(msg);
+    } finally {
+      setLaunchLoading(false);
     }
   };
 
@@ -239,6 +243,7 @@ export default function ProfilesPage() {
           <>
             <Button
               variant="secondary"
+              disabled={launchLoading}
               onClick={() => {
                 setShowLaunch(null);
                 setLaunchError("");
@@ -246,7 +251,11 @@ export default function ProfilesPage() {
             >
               Cancel
             </Button>
-            <Button variant="primary" onClick={handleLaunch}>
+            <Button
+              variant="primary"
+              onClick={handleLaunch}
+              loading={launchLoading}
+            >
               Start
             </Button>
           </>
