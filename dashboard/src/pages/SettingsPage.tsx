@@ -7,37 +7,24 @@ import type { Settings } from "../types";
 export default function SettingsPage() {
   const { settings, serverInfo, setSettings, setServerInfo } = useAppStore();
   const [local, setLocal] = useState<Settings>(settings);
-  const [saving, setSaving] = useState(false);
 
-  // Load settings on mount
+  // Load server info on mount (settings come from localStorage via store)
   useEffect(() => {
     const load = async () => {
       try {
-        const [s, h] = await Promise.all([
-          api.fetchSettings(),
-          api.fetchHealth(),
-        ]);
-        setSettings(s);
-        setLocal(s);
+        const h = await api.fetchHealth();
         setServerInfo(h);
       } catch (e) {
-        console.error("Failed to load settings", e);
+        console.error("Failed to load server info", e);
       }
     };
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleSave = async () => {
-    setSaving(true);
-    try {
-      const updated = await api.updateSettings(local);
-      setSettings(updated);
-    } catch (e) {
-      console.error("Failed to save settings", e);
-    } finally {
-      setSaving(false);
-    }
+  const handleSave = () => {
+    // Settings are persisted to localStorage via setSettings
+    setSettings(local);
   };
 
   const handleReset = () => setLocal(settings);
@@ -48,8 +35,8 @@ export default function SettingsPage() {
         <Button variant="secondary" onClick={handleReset}>
           Reset
         </Button>
-        <Button variant="primary" onClick={handleSave} disabled={saving}>
-          {saving ? "Saving..." : "Apply Settings"}
+        <Button variant="primary" onClick={handleSave}>
+          Apply Settings
         </Button>
       </div>
 

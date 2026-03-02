@@ -4,7 +4,6 @@ import type {
   InstanceTab,
   InstanceMetrics,
   Agent,
-  Settings,
   ServerInfo,
   CreateProfileRequest,
   CreateProfileResponse,
@@ -79,19 +78,6 @@ export async function fetchAllMetrics(): Promise<InstanceMetrics[]> {
 // Agents — endpoint is /api/agents (dashboard API)
 export async function fetchAgents(): Promise<Agent[]> {
   return request<Agent[]>("/api/agents");
-}
-
-// Settings — TODO: check if endpoint exists
-export async function fetchSettings(): Promise<Settings> {
-  return request<Settings>("/api/settings");
-}
-
-export async function updateSettings(settings: Settings): Promise<Settings> {
-  return request<Settings>("/api/settings", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(settings),
-  });
 }
 
 // Health
