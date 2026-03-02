@@ -462,6 +462,7 @@ func (o *Orchestrator) AllTabs() []bridge.InstanceTab {
 				ID:         tab.ID,
 				InstanceID: inst.ID,
 				URL:        tab.URL,
+				Title:      tab.Title,
 			})
 		}
 	}

@@ -124,8 +124,9 @@ func (o *Orchestrator) monitor(inst *InstanceInternal) {
 }
 
 type remoteTab struct {
-	ID  string `json:"id"`
-	URL string `json:"url"`
+	ID    string `json:"id"`
+	URL   string `json:"url"`
+	Title string `json:"title"`
 }
 
 func (o *Orchestrator) fetchTabs(baseURL string) ([]remoteTab, error) {
