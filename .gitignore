@@ -1,4 +1,8 @@
 node_modules/
+.venv/
+plugins/*/.venv/
+__pycache__/
+*.pyc
 browser-bridge
 /pinchtab
 coverage.out
