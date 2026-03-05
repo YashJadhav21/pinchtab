@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -92,6 +93,68 @@ func envBoolOr(key string, fallback bool) bool {
 	}
 }
 
+func envMigrate(newKey, oldKey string) string {
+	if v := os.Getenv(newKey); v != "" {
+		return v
+	}
+	if v := os.Getenv(oldKey); v != "" {
+		slog.Warn("deprecated env var, use "+newKey+" instead", "var", oldKey)
+		return v
+	}
+	return ""
+}
+
+func envOrMigrate(newKey, oldKey, fallback string) string {
+	if v := envMigrate(newKey, oldKey); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func envIntOrMigrate(newKey, oldKey string, fallback int) int {
+	v := envMigrate(newKey, oldKey)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return fallback
+	}
+	return n
+}
+
+func envBoolOrMigrate(newKey, oldKey string, fallback bool) bool {
+	if v, ok := os.LookupEnv(newKey); ok {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "1", "true", "yes", "on":
+			return true
+		case "0", "false", "no", "off":
+			return false
+		default:
+			return fallback
+		}
+	}
+	if v, ok := os.LookupEnv(oldKey); ok {
+		slog.Warn("deprecated env var, use "+newKey+" instead", "var", oldKey)
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "1", "true", "yes", "on":
+			return true
+		case "0", "false", "no", "off":
+			return false
+		default:
+			return fallback
+		}
+	}
+	return fallback
+}
+
+func envMigrateIsSet(newKey, oldKey string) bool {
+	if os.Getenv(newKey) != "" {
+		return true
+	}
+	return os.Getenv(oldKey) != ""
+}
+
 // homeDir returns the user's home directory, checking $HOME first for container compatibility
 func homeDir() string {
 	if home := os.Getenv("HOME"); home != "" {
@@ -162,35 +225,35 @@ type FileConfig struct {
 
 func Load() *RuntimeConfig {
 	cfg := &RuntimeConfig{
-		Bind:              envOr("BRIDGE_BIND", "127.0.0.1"),
-		Port:              envOr("BRIDGE_PORT", "9867"),
+		Bind:              envOrMigrate("PINCHTAB_BIND", "BRIDGE_BIND", "127.0.0.1"),
+		Port:              envOrMigrate("PINCHTAB_PORT", "BRIDGE_PORT", "9867"),
 		InstancePortStart: envIntOr("INSTANCE_PORT_START", 9868),
 		InstancePortEnd:   envIntOr("INSTANCE_PORT_END", 9968),
 		CdpURL:            os.Getenv("CDP_URL"),
-		Token:             os.Getenv("BRIDGE_TOKEN"),
-		StateDir:          envOr("BRIDGE_STATE_DIR", userConfigDir()),
-		Headless:          envBoolOr("BRIDGE_HEADLESS", true),
-		NoRestore:         os.Getenv("BRIDGE_NO_RESTORE") == "true",
-		ProfileDir:        envOr("BRIDGE_PROFILE", filepath.Join(userConfigDir(), "chrome-profile")),
-		ChromeVersion:     envOr("BRIDGE_CHROME_VERSION", "144.0.7559.133"),
-		Timezone:          os.Getenv("BRIDGE_TIMEZONE"),
-		BlockImages:       os.Getenv("BRIDGE_BLOCK_IMAGES") == "true",
-		BlockMedia:        os.Getenv("BRIDGE_BLOCK_MEDIA") == "true",
-		BlockAds:          envBoolOr("BRIDGE_BLOCK_ADS", false),
-		MaxTabs:           envIntOr("BRIDGE_MAX_TABS", 20),
+		Token:             envMigrate("PINCHTAB_TOKEN", "BRIDGE_TOKEN"),
+		StateDir:          envOrMigrate("PINCHTAB_STATE_DIR", "BRIDGE_STATE_DIR", userConfigDir()),
+		Headless:          envBoolOrMigrate("PINCHTAB_HEADLESS", "BRIDGE_HEADLESS", true),
+		NoRestore:         envBoolOrMigrate("PINCHTAB_NO_RESTORE", "BRIDGE_NO_RESTORE", false),
+		ProfileDir:        envOrMigrate("PINCHTAB_PROFILE_DIR", "BRIDGE_PROFILE", filepath.Join(userConfigDir(), "chrome-profile")),
+		ChromeVersion:     envOrMigrate("PINCHTAB_CHROME_VERSION", "BRIDGE_CHROME_VERSION", "144.0.7559.133"),
+		Timezone:          envMigrate("PINCHTAB_TIMEZONE", "BRIDGE_TIMEZONE"),
+		BlockImages:       envBoolOrMigrate("PINCHTAB_BLOCK_IMAGES", "BRIDGE_BLOCK_IMAGES", false),
+		BlockMedia:        envBoolOrMigrate("PINCHTAB_BLOCK_MEDIA", "BRIDGE_BLOCK_MEDIA", false),
+		BlockAds:          envBoolOrMigrate("PINCHTAB_BLOCK_ADS", "BRIDGE_BLOCK_ADS", false),
+		MaxTabs:           envIntOrMigrate("PINCHTAB_MAX_TABS", "BRIDGE_MAX_TABS", 20),
 		ChromeBinary:      envOr("CHROME_BIN", os.Getenv("CHROME_BINARY")),
 		ChromeExtraFlags:  os.Getenv("CHROME_FLAGS"),
 		ExtensionPaths:    splitCommaPaths(os.Getenv("CHROME_EXTENSION_PATHS")),
-		UserAgent:         os.Getenv("BRIDGE_USER_AGENT"),
-		NoAnimations:      os.Getenv("BRIDGE_NO_ANIMATIONS") == "true",
-		StealthLevel:      envOr("BRIDGE_STEALTH", "light"),
+		UserAgent:         envMigrate("PINCHTAB_USER_AGENT", "BRIDGE_USER_AGENT"),
+		NoAnimations:      envBoolOrMigrate("PINCHTAB_NO_ANIMATIONS", "BRIDGE_NO_ANIMATIONS", false),
+		StealthLevel:      envOrMigrate("PINCHTAB_STEALTH", "BRIDGE_STEALTH", "light"),
 		ActionTimeout:     30 * time.Second,
 		NavigateTimeout:   60 * time.Second,
 		ShutdownTimeout:   10 * time.Second,
 		WaitNavDelay:      1 * time.Second,
 	}
 
-	configPath := envOr("BRIDGE_CONFIG", filepath.Join(userConfigDir(), "config.json"))
+	configPath := envOrMigrate("PINCHTAB_CONFIG", "BRIDGE_CONFIG", filepath.Join(userConfigDir(), "config.json"))
 
 	data, err := os.ReadFile(configPath)
 	if err != nil {
@@ -202,7 +265,7 @@ func Load() *RuntimeConfig {
 		return cfg
 	}
 
-	if fc.Port != "" && os.Getenv("BRIDGE_PORT") == "" {
+	if fc.Port != "" && !envMigrateIsSet("PINCHTAB_PORT", "BRIDGE_PORT") {
 		cfg.Port = fc.Port
 	}
 	if fc.InstancePortStart != nil && os.Getenv("INSTANCE_PORT_START") == "" {
@@ -214,28 +277,28 @@ func Load() *RuntimeConfig {
 	if fc.CdpURL != "" && os.Getenv("CDP_URL") == "" {
 		cfg.CdpURL = fc.CdpURL
 	}
-	if fc.Token != "" && os.Getenv("BRIDGE_TOKEN") == "" {
+	if fc.Token != "" && !envMigrateIsSet("PINCHTAB_TOKEN", "BRIDGE_TOKEN") {
 		cfg.Token = fc.Token
 	}
-	if fc.StateDir != "" && os.Getenv("BRIDGE_STATE_DIR") == "" {
+	if fc.StateDir != "" && !envMigrateIsSet("PINCHTAB_STATE_DIR", "BRIDGE_STATE_DIR") {
 		cfg.StateDir = fc.StateDir
 	}
-	if fc.ProfileDir != "" && os.Getenv("BRIDGE_PROFILE") == "" {
+	if fc.ProfileDir != "" && !envMigrateIsSet("PINCHTAB_PROFILE_DIR", "BRIDGE_PROFILE") {
 		cfg.ProfileDir = fc.ProfileDir
 	}
-	if fc.Headless != nil && os.Getenv("BRIDGE_HEADLESS") == "" {
+	if fc.Headless != nil && !envMigrateIsSet("PINCHTAB_HEADLESS", "BRIDGE_HEADLESS") {
 		cfg.Headless = *fc.Headless
 	}
-	if fc.NoRestore && os.Getenv("BRIDGE_NO_RESTORE") == "" {
+	if fc.NoRestore && !envMigrateIsSet("PINCHTAB_NO_RESTORE", "BRIDGE_NO_RESTORE") {
 		cfg.NoRestore = true
 	}
-	if fc.MaxTabs != nil && os.Getenv("BRIDGE_MAX_TABS") == "" {
+	if fc.MaxTabs != nil && !envMigrateIsSet("PINCHTAB_MAX_TABS", "BRIDGE_MAX_TABS") {
 		cfg.MaxTabs = *fc.MaxTabs
 	}
-	if fc.TimeoutSec > 0 && os.Getenv("BRIDGE_TIMEOUT") == "" {
+	if fc.TimeoutSec > 0 && !envMigrateIsSet("PINCHTAB_TIMEOUT", "BRIDGE_TIMEOUT") {
 		cfg.ActionTimeout = time.Duration(fc.TimeoutSec) * time.Second
 	}
-	if fc.NavigateSec > 0 && os.Getenv("BRIDGE_NAV_TIMEOUT") == "" {
+	if fc.NavigateSec > 0 && !envMigrateIsSet("PINCHTAB_NAV_TIMEOUT", "BRIDGE_NAV_TIMEOUT") {
 		cfg.NavigateTimeout = time.Duration(fc.NavigateSec) * time.Second
 	}
 

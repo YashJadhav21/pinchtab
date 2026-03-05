@@ -11,9 +11,9 @@ Restart=always
 RestartSec=5
 
 # Environment
-Environment="BRIDGE_PORT=9867"
-Environment="BRIDGE_HEADLESS=true"
-Environment="BRIDGE_PROFILE=%h/.pinchtab/chrome-profile"
+Environment="PINCHTAB_PORT=9867"
+Environment="PINCHTAB_HEADLESS=true"
+Environment="PINCHTAB_PROFILE_DIR=%h/.pinchtab/chrome-profile"
 Environment="DISPLAY=:0"
 
 # Logging

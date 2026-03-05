@@ -21,11 +21,11 @@ COPY pinchtab /usr/local/bin/pinchtab
 USER pinchtab
 WORKDIR /data
 
-ENV BRIDGE_BIND=0.0.0.0 \
-    BRIDGE_PORT=9867 \
-    BRIDGE_HEADLESS=true \
-    BRIDGE_STATE_DIR=/data \
-    BRIDGE_PROFILE=/data/chrome-profile \
+ENV PINCHTAB_BIND=0.0.0.0 \
+    PINCHTAB_PORT=9867 \
+    PINCHTAB_HEADLESS=true \
+    PINCHTAB_STATE_DIR=/data \
+    PINCHTAB_PROFILE_DIR=/data/chrome-profile \
     CHROME_BINARY=/usr/bin/chromium-browser \
     CHROME_FLAGS="--no-sandbox --disable-gpu"
 

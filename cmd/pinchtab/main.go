@@ -39,7 +39,7 @@ func main() {
 	}
 
 	// Check if running as bridge-only instance (spawned by orchestrator)
-	if os.Getenv("BRIDGE_ONLY") == "1" {
+	if os.Getenv("PINCHTAB_ONLY") == "1" || os.Getenv("BRIDGE_ONLY") == "1" {
 		runBridgeServer(cfg)
 		return
 	}

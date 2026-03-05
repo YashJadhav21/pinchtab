@@ -13,7 +13,7 @@ go build -o pinchtab ./cmd/pinchtab
 ./pinchtab
 
 # Run headless
-BRIDGE_HEADLESS=true ./pinchtab
+PINCHTAB_HEADLESS=true ./pinchtab
 
 # Enable pre-commit hook
 git config core.hooksPath .githooks
@@ -33,6 +33,7 @@ Requires **Go 1.25+** and **Google Chrome**.
 ### Creating a Pull Request
 
 **Important:** When creating a PR, please keep the **"Allow edits from maintainers"** checkbox **enabled** (it's on by default). This lets us:
+
 - Apply small fixes directly
 - Resolve merge conflicts automatically
 - Rebase and update your branch without asking
@@ -71,6 +72,7 @@ go test -tags integration ./tests/integration -v -short
 ```
 
 **Tips for stable integration tests:**
+
 - Run with `-p 1` to avoid Chrome resource contention
 - Set `CI=true` for longer timeouts in CI environments
 - Use `-timeout 5m` to allow for Chrome startup

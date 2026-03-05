@@ -88,10 +88,12 @@ func TestMaskToken(t *testing.T) {
 }
 
 func TestLoadConfigDefaults(t *testing.T) {
-	// Clear relevant env vars
+	_ = os.Unsetenv("PINCHTAB_PORT")
+	_ = os.Unsetenv("PINCHTAB_BIND")
 	_ = os.Unsetenv("BRIDGE_PORT")
 	_ = os.Unsetenv("BRIDGE_BIND")
 	_ = os.Unsetenv("CDP_URL")
+	_ = os.Unsetenv("PINCHTAB_TOKEN")
 	_ = os.Unsetenv("BRIDGE_TOKEN")
 
 	cfg := Load()
@@ -104,12 +106,37 @@ func TestLoadConfigDefaults(t *testing.T) {
 }
 
 func TestLoadConfigEnvOverrides(t *testing.T) {
-	_ = os.Setenv("BRIDGE_PORT", "1234")
-	defer func() { _ = os.Unsetenv("BRIDGE_PORT") }()
+	_ = os.Setenv("PINCHTAB_PORT", "1234")
+	defer func() { _ = os.Unsetenv("PINCHTAB_PORT") }()
 
 	cfg := Load()
 	if cfg.Port != "1234" {
 		t.Errorf("env Port = %v, want 1234", cfg.Port)
+	}
+}
+
+func TestLegacyBridgeEnvFallback(t *testing.T) {
+	_ = os.Unsetenv("PINCHTAB_PORT")
+	_ = os.Setenv("BRIDGE_PORT", "5555")
+	defer func() { _ = os.Unsetenv("BRIDGE_PORT") }()
+
+	cfg := Load()
+	if cfg.Port != "5555" {
+		t.Errorf("legacy fallback Port = %v, want 5555", cfg.Port)
+	}
+}
+
+func TestPinchtabEnvTakesPrecedence(t *testing.T) {
+	_ = os.Setenv("PINCHTAB_PORT", "7777")
+	_ = os.Setenv("BRIDGE_PORT", "8888")
+	defer func() {
+		_ = os.Unsetenv("PINCHTAB_PORT")
+		_ = os.Unsetenv("BRIDGE_PORT")
+	}()
+
+	cfg := Load()
+	if cfg.Port != "7777" {
+		t.Errorf("precedence Port = %v, want 7777 (PINCHTAB_ should win)", cfg.Port)
 	}
 }
 
@@ -126,8 +153,8 @@ func TestDefaultFileConfig(t *testing.T) {
 func TestLoadConfigFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.json")
-	_ = os.Setenv("BRIDGE_CONFIG", configPath)
-	defer func() { _ = os.Unsetenv("BRIDGE_CONFIG") }()
+	_ = os.Setenv("PINCHTAB_CONFIG", configPath)
+	defer func() { _ = os.Unsetenv("PINCHTAB_CONFIG") }()
 
 	// Create a dummy config file
 	configData := `{

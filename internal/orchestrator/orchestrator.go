@@ -20,6 +20,13 @@ import (
 	"github.com/pinchtab/pinchtab/internal/profiles"
 )
 
+func envWithFallback(newKey, oldKey string) string {
+	if v := os.Getenv(newKey); v != "" {
+		return v
+	}
+	return os.Getenv(oldKey)
+}
+
 // InstanceEvent is emitted when instance state changes.
 type InstanceEvent struct {
 	Type     string           `json:"type"` // "instance.started", "instance.stopped", "instance.error"
@@ -114,7 +121,7 @@ func NewOrchestratorWithRunner(baseDir string, runner HostRunner) *Orchestrator 
 		// - Short timeout (<5s) would break first-request scenarios
 		// See: internal/orchestrator/health.go (monitor), internal/bridge/init.go (InitChrome)
 		client:         &http.Client{Timeout: 60 * time.Second},
-		childAuthToken: os.Getenv("BRIDGE_TOKEN"),
+		childAuthToken: envWithFallback("PINCHTAB_TOKEN", "BRIDGE_TOKEN"),
 		portAllocator:  NewPortAllocator(9868, 9968),
 		idMgr:          idutil.NewManager(),
 	}
@@ -208,12 +215,12 @@ func (o *Orchestrator) Launch(name, port string, headless bool, extensionPaths [
 	}
 
 	envOverrides := map[string]string{
-		"BRIDGE_PORT":       port,
-		"BRIDGE_PROFILE":    profilePath,
-		"BRIDGE_STATE_DIR":  instanceStateDir,
-		"BRIDGE_HEADLESS":   headlessStr,
-		"BRIDGE_NO_RESTORE": "true",
-		"BRIDGE_ONLY":       "1",
+		"PINCHTAB_PORT":        port,
+		"PINCHTAB_PROFILE_DIR": profilePath,
+		"PINCHTAB_STATE_DIR":   instanceStateDir,
+		"PINCHTAB_HEADLESS":    headlessStr,
+		"PINCHTAB_NO_RESTORE":  "true",
+		"PINCHTAB_ONLY":        "1",
 	}
 	if len(extensionPaths) > 0 {
 		envOverrides["CHROME_EXTENSION_PATHS"] = strings.Join(extensionPaths, ",")

@@ -12,11 +12,11 @@
     
     <key>EnvironmentVariables</key>
     <dict>
-        <key>BRIDGE_PORT</key>
+        <key>PINCHTAB_PORT</key>
         <string>9867</string>
-        <key>BRIDGE_HEADLESS</key>
+        <key>PINCHTAB_HEADLESS</key>
         <string>true</string>
-        <key>BRIDGE_PROFILE</key>
+        <key>PINCHTAB_PROFILE_DIR</key>
         <string>~/.pinchtab/chrome-profile</string>
     </dict>
     
