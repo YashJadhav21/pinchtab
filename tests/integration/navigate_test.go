@@ -74,8 +74,11 @@ func TestNavigate_NewTab(t *testing.T) {
 // N8: Navigate timeout handling
 func TestNavigate_Timeout(t *testing.T) {
 	// Use a reserved IP address that will timeout (TEST-NET-1)
-	// This should not hang forever, but may return an error or timeout gracefully
-	code, _ := httpPost(t, "/navigate", map[string]string{"url": "http://192.0.2.1"})
+	// Pass a short timeout so we don't wait 30s for the default
+	code, _ := httpPost(t, "/navigate", map[string]any{
+		"url":     "http://192.0.2.1",
+		"timeout": 5, // 5s instead of default 30s
+	})
 	// Just verify request completes (doesn't hang forever)
 	// Response code can vary (200, 400, etc)
 	t.Logf("navigate timeout returned %d", code)

@@ -115,29 +115,36 @@ run_integration_tests() {
     local elapsed
     elapsed=$(echo "$line" | jq -r '.Elapsed // empty' 2>/dev/null)
 
+    # Truncate long test names
+    local display_name="$test_name"
+    local max_len=40
+    if [ ${#display_name} -gt $max_len ]; then
+      display_name="${display_name:0:$((max_len - 1))}…"
+    fi
+
     case "$action" in
       run)
-        printf "\r    ${MUTED}▸ %s${NC}%*s" "$test_name" $((50 - ${#test_name})) ""
+        printf "\r    ${MUTED}▸ %-${max_len}s${NC}        \r" "$display_name"
         ;;
       pass)
         count=$((count + 1))
         if [ -n "$elapsed" ]; then
-          printf "\r    ${SUCCESS}✓${NC} ${MUTED}[%d]${NC} %-40s ${MUTED}%ss${NC}\n" "$count" "$test_name" "$elapsed"
+          printf "\r    ${SUCCESS}✓${NC} ${MUTED}[%2d]${NC} %-${max_len}s ${MUTED}%6ss${NC}\n" "$count" "$display_name" "$elapsed"
         else
-          printf "\r    ${SUCCESS}✓${NC} ${MUTED}[%d]${NC} %s%*s\n" "$count" "$test_name" $((40 - ${#test_name})) ""
+          printf "\r    ${SUCCESS}✓${NC} ${MUTED}[%2d]${NC} %-${max_len}s\n" "$count" "$display_name"
         fi
         ;;
       fail)
         count=$((count + 1))
         if [ -n "$elapsed" ]; then
-          printf "\r    ${ERROR}✗${NC} ${MUTED}[%d]${NC} %-40s ${MUTED}%ss${NC}\n" "$count" "$test_name" "$elapsed"
+          printf "\r    ${ERROR}✗${NC} ${MUTED}[%2d]${NC} %-${max_len}s ${MUTED}%6ss${NC}\n" "$count" "$display_name" "$elapsed"
         else
-          printf "\r    ${ERROR}✗${NC} ${MUTED}[%d]${NC} %s%*s\n" "$count" "$test_name" $((40 - ${#test_name})) ""
+          printf "\r    ${ERROR}✗${NC} ${MUTED}[%2d]${NC} %-${max_len}s\n" "$count" "$display_name"
         fi
         ;;
       skip)
         count=$((count + 1))
-        printf "\r    ${ACCENT}·${NC} ${MUTED}[%d]${NC} %s ${MUTED}(skip)${NC}%*s\n" "$count" "$test_name" $((30 - ${#test_name})) ""
+        printf "\r    ${ACCENT}·${NC} ${MUTED}[%2d]${NC} %-${max_len}s ${MUTED}  skip${NC}\n" "$count" "$display_name"
         ;;
     esac
   done
