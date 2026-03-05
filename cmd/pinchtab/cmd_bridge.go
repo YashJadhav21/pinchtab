@@ -43,7 +43,7 @@ func runBridgeServer(cfg *config.RuntimeConfig) {
 	// HTTP server
 	server := &http.Server{
 		Addr:              listenAddr,
-		Handler:           recoveryMiddleware(loggingMiddleware(mux)),
+		Handler:           recoveryMiddleware(loggingMiddleware(handlers.AuthMiddleware(cfg, mux))),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
