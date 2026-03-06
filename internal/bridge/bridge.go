@@ -176,6 +176,15 @@ func (b *Bridge) ExecuteAction(ctx context.Context, kind string, req ActionReque
 	return fn(ctx, req)
 }
 
+// Execute delegates to TabManager.Execute for safe parallel tab execution.
+// If TabManager is not initialized, the task runs directly.
+func (b *Bridge) Execute(ctx context.Context, tabID string, task func(ctx context.Context) error) error {
+	if b.TabManager != nil {
+		return b.TabManager.Execute(ctx, tabID, task)
+	}
+	return task(ctx)
+}
+
 func (b *Bridge) AvailableActions() []string {
 	keys := make([]string, 0, len(b.Actions))
 	for k := range b.Actions {

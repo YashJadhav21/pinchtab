@@ -1,0 +1,5 @@
+2026/03/06 01:05:12 INFO 🦀 PinchTab port=9867
+2026/03/06 01:05:12 INFO installed pinchtab binary path=C:\Users\Yash\.pinchtab\bin\pinchtab
+2026/03/06 01:05:12 INFO dashboard auto-launch disabled hint="set PINCHTAB_AUTO_LAUNCH=1 to enable"
+2026/03/06 01:05:12 INFO dashboard ready url=http://localhost:9867
+2026/03/06 01:05:12 ERROR server err="listen tcp 127.0.0.1:9867: bind: Only one usage of each socket address (protocol/network address/port) is normally permitted."

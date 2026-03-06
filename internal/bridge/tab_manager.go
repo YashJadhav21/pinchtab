@@ -24,12 +24,17 @@ type TabManager struct {
 	accessed   map[string]bool
 	snapshots  map[string]*RefCache
 	onTabSetup TabSetupFunc
+	executor   *TabExecutor
 	mu         sync.RWMutex
 }
 
 func NewTabManager(browserCtx context.Context, cfg *config.RuntimeConfig, idMgr *idutil.Manager, onTabSetup TabSetupFunc) *TabManager {
 	if idMgr == nil {
 		idMgr = idutil.NewManager()
+	}
+	maxParallel := 0
+	if cfg != nil {
+		maxParallel = cfg.MaxParallelTabs
 	}
 	return &TabManager{
 		browserCtx: browserCtx,
@@ -39,6 +44,7 @@ func NewTabManager(browserCtx context.Context, cfg *config.RuntimeConfig, idMgr 
 		accessed:   make(map[string]bool),
 		snapshots:  make(map[string]*RefCache),
 		onTabSetup: onTabSetup,
+		executor:   NewTabExecutor(maxParallel),
 	}
 }
 
@@ -214,6 +220,11 @@ func (tm *TabManager) CloseTab(tabID string) error {
 	delete(tm.snapshots, tabID)
 	tm.mu.Unlock()
 
+	// Clean up executor per-tab mutex
+	if tm.executor != nil {
+		tm.executor.RemoveTab(tabID)
+	}
+
 	return nil
 }
 
@@ -306,6 +317,21 @@ func (tm *TabManager) RegisterHashTab(hashID, rawCDPID string, ctx context.Conte
 	tm.tabs[hashID] = &TabEntry{Ctx: ctx, Cancel: cancel, CDPID: rawCDPID}
 }
 
+// Execute runs a task for a tab through the TabExecutor, ensuring per-tab
+// sequential execution with cross-tab parallelism bounded by the semaphore.
+// If the TabExecutor has not been initialized, the task runs directly.
+func (tm *TabManager) Execute(ctx context.Context, tabID string, task func(ctx context.Context) error) error {
+	if tm.executor == nil {
+		return task(ctx)
+	}
+	return tm.executor.Execute(ctx, tabID, task)
+}
+
+// Executor returns the underlying TabExecutor (may be nil).
+func (tm *TabManager) Executor() *TabExecutor {
+	return tm.executor
+}
+
 func (tm *TabManager) CleanStaleTabs(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -327,6 +353,10 @@ func (tm *TabManager) CleanStaleTabs(ctx context.Context, interval time.Duration
 			alive[string(t.TargetID)] = true
 		}
 
+		// Collect stale tab IDs while holding the lock, then clean up
+		// executor mutexes outside the lock to avoid blocking TabManager
+		// operations if RemoveTab has to wait for an in-flight task.
+		var staleIDs []string
 		tm.mu.Lock()
 		for id, entry := range tm.tabs {
 			if !alive[id] {
@@ -335,9 +365,16 @@ func (tm *TabManager) CleanStaleTabs(ctx context.Context, interval time.Duration
 				}
 				delete(tm.tabs, id)
 				delete(tm.snapshots, id)
+				staleIDs = append(staleIDs, id)
 				slog.Info("cleaned stale tab", "id", id)
 			}
 		}
 		tm.mu.Unlock()
+
+		if tm.executor != nil {
+			for _, id := range staleIDs {
+				tm.executor.RemoveTab(id)
+			}
+		}
 	}
 }

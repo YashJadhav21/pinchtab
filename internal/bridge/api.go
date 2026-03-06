@@ -26,6 +26,10 @@ type BridgeAPI interface {
 	ExecuteAction(ctx context.Context, kind string, req ActionRequest) (map[string]any, error)
 	AvailableActions() []string
 
+	// Execute runs a task for a tab with per-tab sequential execution
+	// and cross-tab bounded parallelism. If not supported, runs directly.
+	Execute(ctx context.Context, tabID string, task func(ctx context.Context) error) error
+
 	TabLockInfo(tabID string) *LockInfo
 	Lock(tabID, owner string, ttl time.Duration) error
 	Unlock(tabID, owner string) error

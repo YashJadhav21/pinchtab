@@ -28,6 +28,7 @@ type RuntimeConfig struct {
 	BlockMedia        bool
 	BlockAds          bool
 	MaxTabs           int
+	MaxParallelTabs   int // 0 = auto-detect from runtime.NumCPU
 	ChromeBinary      string
 	ChromeExtraFlags  string
 	ExtensionPaths    []string
@@ -241,6 +242,7 @@ func Load() *RuntimeConfig {
 		BlockMedia:        envBoolOrMigrate("PINCHTAB_BLOCK_MEDIA", "BRIDGE_BLOCK_MEDIA", false),
 		BlockAds:          envBoolOrMigrate("PINCHTAB_BLOCK_ADS", "BRIDGE_BLOCK_ADS", false),
 		MaxTabs:           envIntOrMigrate("PINCHTAB_MAX_TABS", "BRIDGE_MAX_TABS", 20),
+		MaxParallelTabs:   envIntOr("PINCHTAB_MAX_PARALLEL_TABS", 0),
 		ChromeBinary:      envOr("CHROME_BIN", os.Getenv("CHROME_BINARY")),
 		ChromeExtraFlags:  os.Getenv("CHROME_FLAGS"),
 		ExtensionPaths:    splitCommaPaths(os.Getenv("CHROME_EXTENSION_PATHS")),

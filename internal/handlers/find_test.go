@@ -59,6 +59,9 @@ func (m *findMockBridge) GetBrowserMemoryMetrics() (*bridge.MemoryMetrics, error
 func (m *findMockBridge) GetAggregatedMemoryMetrics() (*bridge.MemoryMetrics, error) {
 	return &bridge.MemoryMetrics{}, nil
 }
+func (m *findMockBridge) Execute(ctx context.Context, tabID string, task func(ctx context.Context) error) error {
+	return task(ctx)
+}
 
 func newFindTestHandler(cache *bridge.RefCache, failTab bool) *Handlers {
 	mb := &findMockBridge{

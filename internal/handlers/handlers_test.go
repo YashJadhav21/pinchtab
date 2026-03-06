@@ -79,6 +79,10 @@ func (m *mockBridge) GetCrashLogs() []string {
 	return nil
 }
 
+func (m *mockBridge) Execute(ctx context.Context, tabID string, task func(ctx context.Context) error) error {
+	return task(ctx)
+}
+
 func TestHandlers(t *testing.T) {
 	h := New(&mockBridge{}, &config.RuntimeConfig{}, nil, nil, nil)
 	mux := http.NewServeMux()
