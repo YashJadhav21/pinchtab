@@ -457,3 +457,40 @@ func TestValidateFileConfig_IDPIPassthrough(t *testing.T) {
 		t.Errorf("expected at least 2 IDPI errors via ValidateFileConfig, got %d: %v", len(errs), errs)
 	}
 }
+
+// TestValidateIDPIConfig_ScanTimeoutSec verifies that negative values are rejected
+// and zero/positive values are accepted (zero means use the default).
+func TestValidateIDPIConfig_ScanTimeoutSec(t *testing.T) {
+	t.Run("NegativeIsInvalid", func(t *testing.T) {
+		errs := validateIDPIConfig(IDPIConfig{
+			Enabled:        true,
+			ScanTimeoutSec: -1,
+		})
+		if len(errs) == 0 {
+			t.Error("expected error for negative scanTimeoutSec, got none")
+		}
+		if len(errs) > 0 && !strings.Contains(errs[0].Error(), "scanTimeoutSec") {
+			t.Errorf("expected scanTimeoutSec field in error, got: %v", errs[0])
+		}
+	})
+
+	t.Run("ZeroIsValid", func(t *testing.T) {
+		errs := validateIDPIConfig(IDPIConfig{
+			Enabled:        true,
+			ScanTimeoutSec: 0, // zero → use built-in default of 5s
+		})
+		if len(errs) != 0 {
+			t.Errorf("expected no error for scanTimeoutSec=0, got: %v", errs)
+		}
+	})
+
+	t.Run("PositiveIsValid", func(t *testing.T) {
+		errs := validateIDPIConfig(IDPIConfig{
+			Enabled:        true,
+			ScanTimeoutSec: 10,
+		})
+		if len(errs) != 0 {
+			t.Errorf("expected no error for scanTimeoutSec=10, got: %v", errs)
+		}
+	})
+}

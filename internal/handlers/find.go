@@ -135,8 +135,12 @@ func (h *Handlers) HandleFind(w http.ResponseWriter, r *http.Request) {
 		}
 		// Augment with full body text to catch injection in non-interactive
 		// content that the interactive AX filter omits (paragraphs, headings).
+		scanTimeout := time.Duration(h.Config.IDPI.ScanTimeoutSec) * time.Second
+		if scanTimeout <= 0 {
+			scanTimeout = 5 * time.Second
+		}
 		var bodyText string
-		scanCtx, scanCancel := context.WithTimeout(ctxTab, 3*time.Second)
+		scanCtx, scanCancel := context.WithTimeout(ctxTab, scanTimeout)
 		_ = chromedp.Run(scanCtx, chromedp.Evaluate(`document.body ? document.body.innerText : ""`, &bodyText))
 		scanCancel()
 		sb.WriteString(bodyText)

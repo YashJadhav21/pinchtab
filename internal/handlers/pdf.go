@@ -125,11 +125,15 @@ func (h *Handlers) HandlePDF(w http.ResponseWriter, r *http.Request) {
 
 	// IDPI: scan page title, URL, and body text for injection patterns before
 	// rendering to PDF. PDF output is opaque binary — any signal is conveyed
-	// via response headers. A 5-second sub-deadline prevents the scan from
-	// consuming the full action timeout budget.
+	// via response headers. The scan timeout is taken from IDPI config so
+	// operators can tune it without recompiling.
 	if h.Config.IDPI.Enabled && h.Config.IDPI.ScanContent {
+		scanTimeout := time.Duration(h.Config.IDPI.ScanTimeoutSec) * time.Second
+		if scanTimeout <= 0 {
+			scanTimeout = 5 * time.Second
+		}
 		var pageTitle, pageURL, pageText string
-		scanCtx, scanCancel := context.WithTimeout(tCtx, 5*time.Second)
+		scanCtx, scanCancel := context.WithTimeout(tCtx, scanTimeout)
 		defer scanCancel()
 		_ = chromedp.Run(scanCtx,
 			chromedp.Title(&pageTitle),

@@ -207,6 +207,12 @@ type IDPIConfig struct {
 	// CustomPatterns is a user-extensible list of additional injection-detection
 	// phrases. Matched case-insensitively, same as the built-in patterns.
 	CustomPatterns []string `json:"customPatterns,omitempty"`
+
+	// ScanTimeoutSec is the maximum number of seconds the CDP page-text fetch
+	// (body.innerText) may take during content scanning. Capped to prevent the
+	// IDPI scan from consuming the full action-timeout budget.
+	// Defaults to 5. A value ≤ 0 is treated as the default.
+	ScanTimeoutSec int `json:"scanTimeoutSec,omitempty"`
 }
 
 var defaultLocalAllowedDomains = []string{"127.0.0.1", "localhost", "::1"}
@@ -531,6 +537,7 @@ func Load() *RuntimeConfig {
 			StrictMode:     true,
 			ScanContent:    true,
 			WrapContent:    true,
+			ScanTimeoutSec: 5,
 		},
 	}
 	finalizeProfileConfig(cfg)
@@ -794,6 +801,7 @@ func DefaultFileConfig() FileConfig {
 				StrictMode:     true,
 				ScanContent:    true,
 				WrapContent:    true,
+				ScanTimeoutSec: 5,
 			},
 		},
 		Profiles: ProfilesConfig{

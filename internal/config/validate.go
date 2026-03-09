@@ -273,6 +273,13 @@ func validateIDPIConfig(cfg IDPIConfig) []error {
 		}
 	}
 
+	if cfg.ScanTimeoutSec < 0 {
+		errs = append(errs, ValidationError{
+			Field:   "security.idpi.scanTimeoutSec",
+			Message: "scanTimeoutSec must not be negative",
+		})
+	}
+
 	return errs
 }
 
