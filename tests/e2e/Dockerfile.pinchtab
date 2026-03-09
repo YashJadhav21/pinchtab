@@ -1,12 +1,12 @@
 # Build stage
-FROM golang:1.23-bookworm AS builder
+FROM golang:1.26-bookworm AS builder
 
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 go build -o pinchtab ./cmd/pinchtab
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o pinchtab ./cmd/pinchtab
 
 # Runtime stage
 FROM debian:bookworm-slim
