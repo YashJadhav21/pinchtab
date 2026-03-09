@@ -882,6 +882,7 @@ func FileConfigFromRuntime(cfg *RuntimeConfig) FileConfig {
 				AllowHosts:   append([]string(nil), cfg.AttachAllowHosts...),
 				AllowSchemes: append([]string(nil), cfg.AttachAllowSchemes...),
 			},
+			IDPI: cfg.IDPI,
 		},
 		Profiles: ProfilesConfig{
 			BaseDir:        cfg.ProfilesBaseDir,
