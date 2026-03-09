@@ -110,9 +110,7 @@ const idpiToggleRows = [
     "Wrap content",
     "Mark returned page text as untrusted content for downstream consumers.",
   ],
-] as const satisfies ReadonlyArray<
-  readonly [IDPIToggleKey, string, string]
->;
+] as const satisfies ReadonlyArray<readonly [IDPIToggleKey, string, string]>;
 
 function csvToList(value: string): string[] {
   return value
@@ -246,7 +244,9 @@ export default function SettingsPage() {
   const apiTokenMissing = backendConfig
     ? backendConfig.server.token.trim() === ""
     : false;
-  const idpiEnabled = backendConfig ? backendConfig.security.idpi.enabled : false;
+  const idpiEnabled = backendConfig
+    ? backendConfig.security.idpi.enabled
+    : false;
   const idpiAllowedDomains = backendConfig
     ? backendConfig.security.idpi.allowedDomains
     : [];
@@ -822,7 +822,9 @@ export default function SettingsPage() {
                           onChange={(e) =>
                             updateBackendSection("security", {
                               [key]: e.target.checked,
-                            } as Partial<Pick<BackendSecurityConfig, SecurityEndpointKey>>)
+                            } as Partial<
+                              Pick<BackendSecurityConfig, SecurityEndpointKey>
+                            >)
                           }
                           className="h-4 w-4"
                         />
@@ -856,7 +858,11 @@ export default function SettingsPage() {
                           : "IDPI is enforcing a specific website whitelist and content protections."}
                   </div>
                   {idpiToggleRows.map(([key, label, description]) => (
-                    <SettingRow key={key} label={label} description={description}>
+                    <SettingRow
+                      key={key}
+                      label={label}
+                      description={description}
+                    >
                       <label className="flex items-center justify-end gap-3 text-sm text-text-secondary">
                         <input
                           type="checkbox"
@@ -881,7 +887,9 @@ export default function SettingsPage() {
                   >
                     <div className="space-y-2">
                       <input
-                        value={listToCsv(backendConfig.security.idpi.allowedDomains)}
+                        value={listToCsv(
+                          backendConfig.security.idpi.allowedDomains,
+                        )}
                         onChange={(e) =>
                           updateBackendSection("security", {
                             idpi: {
@@ -904,7 +912,9 @@ export default function SettingsPage() {
                     description="Optional comma-separated phrases to treat as suspicious prompt-injection content."
                   >
                     <input
-                      value={listToCsv(backendConfig.security.idpi.customPatterns)}
+                      value={listToCsv(
+                        backendConfig.security.idpi.customPatterns,
+                      )}
                       onChange={(e) =>
                         updateBackendSection("security", {
                           idpi: {
@@ -1060,7 +1070,9 @@ export default function SettingsPage() {
                   >
                     <div className="space-y-2">
                       <input
-                        value={listToCsv(backendConfig.security.attach.allowHosts)}
+                        value={listToCsv(
+                          backendConfig.security.attach.allowHosts,
+                        )}
                         onChange={(e) =>
                           updateBackendSection("security", {
                             attach: {
@@ -1083,7 +1095,9 @@ export default function SettingsPage() {
                     description="Comma-separated scheme allowlist, usually ws and wss."
                   >
                     <input
-                      value={listToCsv(backendConfig.security.attach.allowSchemes)}
+                      value={listToCsv(
+                        backendConfig.security.attach.allowSchemes,
+                      )}
                       onChange={(e) =>
                         updateBackendSection("security", {
                           attach: {

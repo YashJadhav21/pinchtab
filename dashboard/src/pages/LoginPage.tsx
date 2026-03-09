@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { FormEvent } from "react";
+import type { ComponentProps } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Button, Card } from "../components/atoms";
 import * as api from "../services/api";
@@ -13,9 +13,12 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
 
   const from =
-    (location.state as { from?: string } | null)?.from || "/dashboard/monitoring";
+    (location.state as { from?: string } | null)?.from ||
+    "/dashboard/monitoring";
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit: NonNullable<ComponentProps<"form">["onSubmit"]> = async (
+    event,
+  ) => {
     event.preventDefault();
     setSubmitting(true);
     setError("");

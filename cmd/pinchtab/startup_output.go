@@ -18,25 +18,25 @@ type startupBannerOptions struct {
 }
 
 func printStartupBanner(cfg *config.RuntimeConfig, opts startupBannerOptions) {
-	fmt.Fprintln(os.Stdout, renderStartupLogo(blankIfEmpty(opts.Mode, "server")))
-	fmt.Fprintf(os.Stdout, "  %s  %s\n", styleLabel("listen"), styleValue(blankIfEmpty(opts.ListenAddr, cfg.ListenAddr())))
+	writeBannerLine(renderStartupLogo(blankIfEmpty(opts.Mode, "server")))
+	writeBannerf("  %s  %s\n", styleLabel("listen"), styleValue(blankIfEmpty(opts.ListenAddr, cfg.ListenAddr())))
 	if opts.PublicURL != "" {
-		fmt.Fprintf(os.Stdout, "  %s  %s\n", styleLabel("url"), styleValue(opts.PublicURL))
+		writeBannerf("  %s  %s\n", styleLabel("url"), styleValue(opts.PublicURL))
 	}
 	if opts.Strategy != "" {
-		fmt.Fprintf(os.Stdout, "  %s  %s\n", styleLabel("strategy"), styleValue(opts.Strategy))
+		writeBannerf("  %s  %s\n", styleLabel("strategy"), styleValue(opts.Strategy))
 	}
 	if opts.ProfileDir != "" {
-		fmt.Fprintf(os.Stdout, "  %s  %s\n", styleLabel("profile"), styleValue(opts.ProfileDir))
+		writeBannerf("  %s  %s\n", styleLabel("profile"), styleValue(opts.ProfileDir))
 	}
 	printSecuritySummary(os.Stdout, cfg, "  ")
-	fmt.Fprintln(os.Stdout)
+	writeBannerLine("")
 }
 
 func printSecuritySummary(w io.Writer, cfg *config.RuntimeConfig, prefix string) {
 	posture := assessSecurityPosture(cfg)
 
-	fmt.Fprintf(
+	writeSummaryf(
 		w,
 		"%s%s  %s  %s\n",
 		prefix,
@@ -45,7 +45,7 @@ func printSecuritySummary(w io.Writer, cfg *config.RuntimeConfig, prefix string)
 		styleSecurityBar(posture.Level, renderPostureBar(posture.Passed, posture.Total)),
 	)
 	for _, check := range posture.Checks {
-		fmt.Fprintf(
+		writeSummaryf(
 			w,
 			"%s  [%s] %s %s\n",
 			prefix,
@@ -82,6 +82,18 @@ func blankIfEmpty(value, fallback string) string {
 
 func renderStartupLogo(mode string) string {
 	return styleLogo(startupLogo) + "  " + styleMode(mode)
+}
+
+func writeBannerLine(line string) {
+	_, _ = fmt.Fprintln(os.Stdout, line)
+}
+
+func writeBannerf(format string, args ...any) {
+	_, _ = fmt.Fprintf(os.Stdout, format, args...)
+}
+
+func writeSummaryf(w io.Writer, format string, args ...any) {
+	_, _ = fmt.Fprintf(w, format, args...)
 }
 
 func styleLogo(text string) string {

@@ -129,7 +129,10 @@ function AppContent() {
       <NavBar />
       <main className="dashboard-grid flex-1 overflow-hidden">
         <Routes>
-          <Route path="/" element={<Navigate to="/dashboard/monitoring" replace />} />
+          <Route
+            path="/"
+            element={<Navigate to="/dashboard/monitoring" replace />}
+          />
           <Route
             path="/login"
             element={<Navigate to="/dashboard/monitoring" replace />}
@@ -138,10 +141,7 @@ function AppContent() {
             path="/dashboard"
             element={<Navigate to="/dashboard/monitoring" replace />}
           />
-          <Route
-            path="/dashboard/monitoring"
-            element={<MonitoringPage />}
-          />
+          <Route path="/dashboard/monitoring" element={<MonitoringPage />} />
           <Route path="/dashboard/profiles" element={<ProfilesPage />} />
           <Route
             path="/dashboard/agents"
