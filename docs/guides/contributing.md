@@ -259,13 +259,14 @@ All dev scripts are accessible through `./pdev`:
 | `check dashboard` | Dashboard checks only |
 | `check security` | Gosec security scan |
 | `check docs` | Validate docs JSON |
+| `format dashboard` | Run Prettier on dashboard sources |
 | `test` | All tests (unit + integration + system) |
 | `test unit` | Unit tests only |
 | `test integration` | Integration tests only |
 | `test system` | System tests only |
 | `build` | Build & run (default) |
+| `run` | Run the application |
 | `doctor` | Setup dev environment |
-| `hooks` | Install git hooks |
 
 For the fancy interactive picker, install [gum](https://github.com/charmbracelet/gum): `brew install gum`
 
@@ -278,6 +279,7 @@ pdev() { if [ -x "./pdev" ]; then ./pdev "$@"; else echo "pdev not found in curr
 
 ```bash
 ./pdev check              # Full non-test checks (recommended)
+./pdev format dashboard   # Fix dashboard formatting
 gofmt -w .                # Format code
 golangci-lint run         # Lint
 ./pdev doctor             # Verify environment
@@ -292,7 +294,7 @@ Git hooks are installed by `./pdev doctor` (or `./scripts/install-hooks.sh`). Th
 
 To manually reinstall hooks:
 ```bash
-./pdev hooks
+./scripts/install-hooks.sh
 ```
 
 ### Development Workflow
@@ -372,7 +374,7 @@ pinchtab --version
 
 **First step:** Run doctor to verify your setup:
 ```bash
-./doctor.sh
+./pdev doctor
 ```
 
 This will tell you exactly what's missing or misconfigured.
@@ -388,7 +390,7 @@ This will tell you exactly what's missing or misconfigured.
 - Or: `go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest`
 
 **"Git hooks not running on commit"**
-- Run: `./pdev hooks`
+- Run: `./scripts/install-hooks.sh`
 - Or: `./pdev doctor` (prompts to install)
 
 **"Chrome not found"**

@@ -152,6 +152,38 @@ export async function fetchHealth(): Promise<DashboardServerInfo> {
   );
 }
 
+export async function probeBackendAuth(): Promise<{
+  requiresAuth: boolean;
+  health?: DashboardServerInfo;
+}> {
+  const res = await fetch(BASE + "/health");
+  if (res.ok) {
+    return {
+      requiresAuth: false,
+      health: normalizeDashboardServerInfo(
+        (await res.json()) as DashboardServerInfo,
+      ),
+    };
+  }
+
+  const err = (await res
+    .json()
+    .catch(() => ({ code: "", error: res.statusText }))) as {
+    code?: string;
+    error?: string;
+  };
+  if (
+    res.status === 401 &&
+    (err.code === "missing_token" ||
+      err.code === "bad_token" ||
+      err.error === "unauthorized")
+  ) {
+    return { requiresAuth: true };
+  }
+
+  throw new Error(err.error || "Request failed");
+}
+
 export async function verifyBackendToken(
   token: string,
 ): Promise<DashboardServerInfo> {

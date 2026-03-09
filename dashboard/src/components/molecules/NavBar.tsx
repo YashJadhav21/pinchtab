@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useAppStore } from "../../stores/useAppStore";
+import { clearStoredAuthToken, getStoredAuthToken } from "../../services/auth";
 import "./NavBar.css";
 
 interface Tab {
@@ -26,6 +27,7 @@ export default function NavBar({ onRefresh }: NavBarProps) {
   const tabsRef = useRef<HTMLElement>(null);
   const location = useLocation();
   const navigate = useNavigate();
+  const hasStoredToken = getStoredAuthToken() !== "";
 
   // Close mobile menu on route change
   useEffect(() => {
@@ -38,6 +40,12 @@ export default function NavBar({ onRefresh }: NavBarProps) {
     onRefresh();
     setTimeout(() => setRefreshing(false), 800);
   }, [onRefresh, refreshing]);
+
+  const handleLogout = useCallback(() => {
+    clearStoredAuthToken();
+    setMobileMenuOpen(false);
+    navigate("/login", { replace: true });
+  }, [navigate]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -114,6 +122,15 @@ export default function NavBar({ onRefresh }: NavBarProps) {
               </span>
             </div>
           )}
+          {hasStoredToken && (
+            <button
+              type="button"
+              className="mr-2 rounded-sm border border-transparent px-3 py-1.5 text-xs font-medium uppercase tracking-[0.08em] text-text-muted transition-all duration-150 hover:border-border-subtle hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+              onClick={handleLogout}
+            >
+              Logout
+            </button>
+          )}
           {onRefresh && (
             <button
               className={`navbar-icon-btn flex h-8 w-8 cursor-pointer items-center justify-center rounded-sm border border-transparent bg-transparent text-base text-text-muted transition-all duration-150 hover:border-border-subtle hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 ${
@@ -154,6 +171,15 @@ export default function NavBar({ onRefresh }: NavBarProps) {
               {tab.label}
             </NavLink>
           ))}
+          {hasStoredToken && (
+            <button
+              type="button"
+              className="border-t border-border-subtle px-4 py-3 text-left text-sm font-medium text-text-secondary transition-colors duration-150 hover:bg-bg-elevated hover:text-text-primary"
+              onClick={handleLogout}
+            >
+              Logout
+            </button>
+          )}
         </nav>
       )}
     </header>

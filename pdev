@@ -17,18 +17,19 @@ NC=$'\033[0m'
 # ── Commands ─────────────────────────────────────────────────────────
 # name:emoji:description
 COMMANDS=(
-  "check:🧪:All checks (Go + Dashboard)"
-  "  check go:🧪:Go only"
-  "  check dashboard:🧪:Dashboard only"
-  "  check security:🧪:Gosec security scan"
-  "  check docs:🧪:Validate docs JSON"
-  "test:🔬:All tests (unit + integration + system)"
-  "  test unit:🔬:Unit tests only"
-  "  test integration:🔬:Integration tests only"
-  "  test system:🔬:System tests only"
-  "build:🚀:Build & run (default)"
+  "build:🚀:Build & run"
+  "run:🏃:Run the application"
+  "check:🧪:All checks"
+  "test:🔬:All tests"
+  "  unit:🔬:Unit tests only"
+  "  integration:🔬:Integration tests only"
+  "  system:🔬:System tests only"
   "doctor:🩺:Setup dev environment"
-  "hooks:🪝:Install git hooks"
+  "check go:🧪:Go only"
+  "check dashboard:🧪:Dashboard only"
+  "check security:🧪:Gosec security scan"
+  "check docs:🧪:Validate docs JSON"
+  "format dashboard:🎨:Run Prettier on dashboard sources"
 )
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -90,22 +91,27 @@ run_command() {
       echo ""
       exec bash scripts/check-docs-json.sh
       ;;
+    "format dashboard")
+      echo "  ${ACCENT}${BOLD}🎨 Dashboard formatting${NC}"
+      echo ""
+      exec bash -lc 'cd dashboard && if command -v bun >/dev/null 2>&1; then bun run format; else npx prettier --write '"'"'src/**/*.{ts,tsx,css}'"'"'; fi'
+      ;;
     "test")
       echo "  ${ACCENT}${BOLD}🔬 All tests${NC}"
       echo ""
       exec bash scripts/test.sh all
       ;;
-    "test unit")
+    "unit")
       echo "  ${ACCENT}${BOLD}🔬 Unit tests${NC}"
       echo ""
       exec bash scripts/test.sh unit
       ;;
-    "test integration")
+    "integration")
       echo "  ${ACCENT}${BOLD}🔬 Integration tests${NC}"
       echo ""
       exec bash scripts/test.sh integration
       ;;
-    "test system")
+    "system")
       echo "  ${ACCENT}${BOLD}🔬 System tests${NC}"
       echo ""
       exec bash scripts/test.sh system
@@ -203,6 +209,13 @@ if [ $# -gt 0 ]; then
         run_command "test $2"
       else
         run_command "test"
+      fi
+      ;;
+    format)
+      if [ $# -gt 1 ]; then
+        run_command "format $2"
+      else
+        run_command "format"
       fi
       ;;
     *) run_command "$1" ;;

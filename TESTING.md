@@ -13,7 +13,7 @@ The `pdev` developer toolkit is the easiest way to run checks and tests:
 ./pdev check              # All checks (format, vet, build, lint)
 ./pdev check go           # Go checks only
 ./pdev check security     # Gosec security scan
-./pdev hooks              # Install git hooks (pre-commit)
+./pdev format dashboard   # Run Prettier on dashboard sources
 ./pdev doctor             # Setup dev environment
 ```
 

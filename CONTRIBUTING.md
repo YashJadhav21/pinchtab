@@ -33,6 +33,7 @@ This significantly speeds up the merge process. Thank you! 🙏
 ```bash
 ./pdev doctor        # setup environment and hooks
 ./pdev check         # format, vet, build, lint
+./pdev format dashboard
 ./pdev test          # unit + integration + system
 ./pdev test unit
 ./pdev test integration
@@ -57,4 +58,9 @@ go test -tags integration ./tests/integration -v'
 
 ## Hooks
 
-`./pdev doctor` installs the git hooks. They enforce formatting and checks before commit.
+`./pdev doctor` offers to install the git hooks. They enforce formatting and checks before commit.
+You can also install them directly with:
+
+```bash
+./scripts/install-hooks.sh
+```
