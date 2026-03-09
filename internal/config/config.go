@@ -868,6 +868,7 @@ func FileConfigFromRuntime(cfg *RuntimeConfig) FileConfig {
 			Bind:     cfg.Bind,
 			Token:    cfg.Token,
 			StateDir: cfg.StateDir,
+			Engine:   cfg.Engine,
 		},
 		Browser: BrowserConfig{
 			ChromeVersion:    cfg.ChromeVersion,

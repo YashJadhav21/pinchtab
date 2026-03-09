@@ -223,3 +223,62 @@ Lite-served responses include `X-Engine: lite` header for observability.
 | gost-dom/browser v0.11.0 | ~2.5MB source | MIT | Headless browser (HTML parsing, DOM traversal) |
 | gost-dom/css v0.1.0 | ~200KB | MIT | CSS selector support |
 | golang.org/x/net (existing) | already in go.mod | BSD-3 | HTML tokenizer for script stripping |
+
+## Performance Benchmark: Lite vs Chrome
+
+**Lite run:** 2026-03-09 | **Chrome run:** 2026-03-09  
+**Method:** 8 real-world websites × 4 operations each (Navigate → Snapshot All → Snapshot Interactive → Text)
+
+### Response Times (ms)
+
+| Website | Lite Navigate | Lite Snap (all) | Lite Text | Chrome Navigate | Chrome Snap (all) | Chrome Text | Winner |
+|---------|:------------:|:--------------:|:---------:|:--------------:|:----------------:|:-----------:|:------:|
+| Example.com | 38ms | 23ms | 29ms | 396ms | 46ms | 34ms | **LITE** |
+| Wikipedia (Go) | 657ms | 775ms | 120ms | 1310ms | 2703ms | 201ms | **LITE** |
+| Hacker News | 1032ms | 188ms | 21ms | 1218ms | 247ms | 27ms | **LITE** |
+| httpbin.org | 1117ms | 31ms | 24ms | 4745ms | 187ms | 47ms | **LITE** |
+| GitHub Explore | 1402ms | 161ms | 24ms | 6156ms | 329ms | 20ms | **LITE** |
+| DuckDuckGo | 119ms | 26ms | 20ms | 1488ms | 394ms | 41ms | **LITE** |
+| Wikipedia (CS) | 215ms | 535ms | 687ms | 2668ms | 1249ms | 130ms | **LITE** |
+| Stack Overflow | ❌ 502 | 694ms | 111ms | 6433ms | 376ms | 61ms | **CHROME** |
+
+> Stack Overflow blocks bot HTTP requests — the Lite engine's `Navigate` got a 502. Chrome handles this via a real browser session.
+
+### Totals (7 sites where both engines succeeded)
+
+| Metric | Lite | Chrome | Speedup |
+|--------|-----:|-------:|--------:|
+| Navigate Total | 4,580ms | 17,981ms | **3.9×** faster |
+| Snapshot Total | 1,739ms | 5,155ms | **3.0×** faster |
+| Text Total | 925ms | 500ms | 0.5× (Chrome faster) |
+| **Grand Total** | **7,244ms** | **23,636ms** | **3.3× faster** |
+
+> Lite wins **7/8 sites** overall. Chrome is faster at text extraction because it runs Mozilla Readability.js in-browser. Lite performs raw DOM text walk which is slower for very large articles (e.g. Wikipedia CS: 687ms vs 130ms).
+
+### Node Count Comparison
+
+| Website | Lite Nodes | Chrome Nodes | Lite Interactive | Chrome Interactive | Lite Text (chars) | Chrome Text (chars) |
+|---------|:----------:|:------------:|:----------------:|:-----------------:|:----------------:|:-----------------:|
+| Example.com | 6 | 8 | 1 | 1 | 125 | 209 |
+| Wikipedia (Go) | 6,074 | 7,110 | 1,276 | 1,063 | 75,659 | 62,859 |
+| Hacker News | 805 | 975 | 229 | 229 | 4,025 | 4,169 |
+| httpbin.org | 62 | 113 | 5 | 29 | 274 | 1,179 |
+| GitHub Explore | 1,533 | 830 | 331 | 240 | 8,340 | 368 |
+| DuckDuckGo | 143 | 655 | 20 | 102 | 123 | 7,231 |
+| Wikipedia (CS) | 4,941 | 4,653 | 1,627 | 1,061 | 79,799 | 58,071 |
+| Stack Overflow | — | 779 | — | 192 | — | 23,671 |
+
+> **Why node counts differ:** Lite strips `<script>` tags before parsing and has no CSS engine so hidden elements still appear. Chrome's accessibility tree prunes hidden/invisible elements. DuckDuckGo and GitHub Explore show lower Chrome text because Chrome's Readability.js strips nav/sidebar content, while Lite captures all visible text.
+
+### Key Takeaways
+
+| Scenario | Recommendation |
+|----------|---------------|
+| Static sites, wikis, news, blogs | **Lite** — 3–12× faster, no Chrome overhead |
+| JavaScript-rendered SPAs (React, Next.js, etc.) | **Chrome** — Lite captures pre-JS HTML only |
+| Sites that block HTTP bots (Stack Overflow, some social) | **Chrome** — real browser bypasses bot detection |
+| Snapshot / DOM traversal on large pages | **Lite** — 3× faster snapshot on Wikipedia |
+| Text extraction on large articles | **Chrome** — Readability.js is more accurate and faster |
+| Pipelines needing screenshots / PDF / evaluate | **Chrome** — Lite doesn't support these |
+
+*Benchmark run from `tests/lite_engine_benchmark.ps1` on 2026-03-09*
