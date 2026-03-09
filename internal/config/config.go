@@ -70,6 +70,9 @@ type RuntimeConfig struct {
 	// IDPI (Indirect Prompt Injection defense) settings
 	IDPI IDPIConfig
 
+	// Engine mode: "chrome" (default), "lite", or "auto"
+	Engine string
+
 	// Scheduler settings (dashboard mode only)
 	Scheduler SchedulerConfig
 }
@@ -133,6 +136,7 @@ type ServerConfig struct {
 	Bind     string `json:"bind,omitempty"`
 	Token    string `json:"token,omitempty"`
 	StateDir string `json:"stateDir,omitempty"`
+	Engine   string `json:"engine,omitempty"`
 }
 
 // BrowserConfig holds Chrome executable/runtime wiring.
@@ -539,6 +543,9 @@ func Load() *RuntimeConfig {
 			WrapContent:    true,
 			ScanTimeoutSec: 5,
 		},
+
+		// Engine default
+		Engine: envOr("PINCHTAB_ENGINE", "chrome"),
 	}
 	finalizeProfileConfig(cfg)
 
@@ -602,6 +609,9 @@ func applyFileConfig(cfg *RuntimeConfig, fc *FileConfig) {
 	}
 	if fc.Server.StateDir != "" {
 		cfg.StateDir = fc.Server.StateDir
+	}
+	if fc.Server.Engine != "" && os.Getenv("PINCHTAB_ENGINE") == "" {
+		cfg.Engine = fc.Server.Engine
 	}
 	// Security
 	if fc.Security.AllowEvaluate != nil {

@@ -13,6 +13,7 @@ import (
 	"github.com/pinchtab/pinchtab/internal/assets"
 	"github.com/pinchtab/pinchtab/internal/bridge"
 	"github.com/pinchtab/pinchtab/internal/config"
+	"github.com/pinchtab/pinchtab/internal/engine"
 	"github.com/pinchtab/pinchtab/internal/handlers"
 )
 
@@ -35,6 +36,15 @@ func runBridgeServer(cfg *config.RuntimeConfig) {
 
 	// Register all bridge handlers
 	h := handlers.New(bridgeInstance, cfg, nil, nil, nil)
+
+	// Wire engine router if mode is "lite" or "auto".
+	mode := engine.Mode(cfg.Engine)
+	if mode == engine.ModeLite || mode == engine.ModeAuto {
+		lite := engine.NewLiteEngine()
+		h.Router = engine.NewRouter(mode, lite)
+		slog.Info("engine router enabled", "mode", cfg.Engine, "rules", h.Router.Rules())
+	}
+
 	shutdownOnce := &sync.Once{}
 	doShutdown := func() {
 		shutdownOnce.Do(func() {

@@ -15,6 +15,7 @@ import (
 
 	"github.com/chromedp/chromedp"
 	"github.com/pinchtab/pinchtab/internal/bridge"
+	"github.com/pinchtab/pinchtab/internal/engine"
 	"github.com/pinchtab/pinchtab/internal/idpi"
 	"github.com/pinchtab/pinchtab/internal/web"
 )
@@ -52,12 +53,6 @@ const maxBodySize = 1 << 20
 //
 //	pinchtab nav https://pinchtab.com
 func (h *Handlers) HandleNavigate(w http.ResponseWriter, r *http.Request) {
-	// Ensure Chrome is initialized
-	if err := h.ensureChrome(); err != nil {
-		web.Error(w, 500, fmt.Errorf("chrome initialization: %w", err))
-		return
-	}
-
 	var req struct {
 		TabID        string  `json:"tabId"`
 		URL          string  `json:"url"`
@@ -99,6 +94,20 @@ func (h *Handlers) HandleNavigate(w http.ResponseWriter, r *http.Request) {
 		web.Error(w, 400, fmt.Errorf("url required"))
 		return
 	}
+
+	// --- Lite engine fast path ---
+	if h.useLite(engine.CapNavigate, req.URL) {
+		result, err := h.Router.Lite().Navigate(r.Context(), req.URL)
+		if err != nil {
+			web.Error(w, 502, fmt.Errorf("lite navigate: %w", err))
+			return
+		}
+		w.Header().Set("X-Engine", "lite")
+		web.JSON(w, 200, map[string]any{"tabId": result.TabID, "url": result.URL, "title": result.Title})
+		return
+	}
+
+	// Ensure Chrome is initialized
 
 	// Default to creating new tab (API design: /navigate always creates new tab)
 	// Unless explicitly reusing an existing tab by specifying TabID

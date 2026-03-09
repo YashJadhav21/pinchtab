@@ -13,6 +13,7 @@ import (
 
 	"github.com/chromedp/chromedp"
 	"github.com/pinchtab/pinchtab/internal/bridge"
+	"github.com/pinchtab/pinchtab/internal/engine"
 	"github.com/pinchtab/pinchtab/internal/idpi"
 	"github.com/pinchtab/pinchtab/internal/web"
 	"gopkg.in/yaml.v3"
@@ -59,6 +60,25 @@ import (
 //	r = requests.get("http://localhost:9867/snapshot", params={"tabId": "abc123", "filter": "interactive"})
 //	tree = r.json()
 func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
+	filter := r.URL.Query().Get("filter")
+
+	// --- Lite engine fast path ---
+	if h.useLite(engine.CapSnapshot, "") {
+		nodes, err := h.Router.Lite().Snapshot(r.Context(), filter)
+		if err != nil {
+			web.Error(w, 500, fmt.Errorf("lite snapshot: %w", err))
+			return
+		}
+		// Convert to bridge.A11yNode for API compatibility.
+		flat := make([]bridge.A11yNode, len(nodes))
+		for i, n := range nodes {
+			flat[i] = bridge.A11yNode{Ref: n.Ref, Role: n.Role, Name: n.Name, Depth: n.Depth, Value: n.Value}
+		}
+		w.Header().Set("X-Engine", "lite")
+		web.JSON(w, 200, map[string]any{"nodes": flat})
+		return
+	}
+
 	// Ensure Chrome is initialized
 	if err := h.ensureChrome(); err != nil {
 		web.Error(w, 500, fmt.Errorf("chrome initialization: %w", err))
@@ -66,7 +86,7 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tabID := r.URL.Query().Get("tabId")
-	filter := r.URL.Query().Get("filter")
+	// filter already parsed above for lite path
 	doDiff := r.URL.Query().Get("diff") == "true"
 	format := r.URL.Query().Get("format")
 	output := r.URL.Query().Get("output")

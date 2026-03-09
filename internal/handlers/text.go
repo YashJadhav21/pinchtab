@@ -9,6 +9,7 @@ import (
 
 	"github.com/chromedp/chromedp"
 	"github.com/pinchtab/pinchtab/internal/assets"
+	"github.com/pinchtab/pinchtab/internal/engine"
 	"github.com/pinchtab/pinchtab/internal/idpi"
 	"github.com/pinchtab/pinchtab/internal/web"
 )
@@ -17,6 +18,19 @@ import (
 //
 // @Endpoint GET /text
 func (h *Handlers) HandleText(w http.ResponseWriter, r *http.Request) {
+	// --- Lite engine fast path ---
+	if h.useLite(engine.CapText, "") {
+		text, err := h.Router.Lite().Text(r.Context())
+		if err != nil {
+			web.Error(w, 500, fmt.Errorf("lite text: %w", err))
+			return
+		}
+		w.Header().Set("X-Engine", "lite")
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte(text))
+		return
+	}
+
 	// Ensure Chrome is initialized
 	if err := h.ensureChrome(); err != nil {
 		web.Error(w, 500, fmt.Errorf("chrome initialization: %w", err))

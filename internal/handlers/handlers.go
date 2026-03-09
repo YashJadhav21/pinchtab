@@ -10,6 +10,7 @@ import (
 	"github.com/pinchtab/pinchtab/internal/bridge"
 	"github.com/pinchtab/pinchtab/internal/config"
 	"github.com/pinchtab/pinchtab/internal/dashboard"
+	"github.com/pinchtab/pinchtab/internal/engine"
 	"github.com/pinchtab/pinchtab/internal/idutil"
 	"github.com/pinchtab/pinchtab/internal/semantic"
 )
@@ -24,6 +25,7 @@ type Handlers struct {
 	Matcher      semantic.ElementMatcher
 	IntentCache  *semantic.IntentCache
 	Recovery     *semantic.RecoveryEngine
+	Router       *engine.Router // optional; nil ⇒ chrome-only
 }
 
 func New(b bridge.BridgeAPI, cfg *config.RuntimeConfig, p bridge.ProfileService, d *dashboard.Dashboard, o bridge.OrchestratorService) *Handlers {
@@ -83,6 +85,11 @@ func New(b bridge.BridgeAPI, cfg *config.RuntimeConfig, p bridge.ProfileService,
 // ensureChrome ensures Chrome is initialized before handling requests that need it
 func (h *Handlers) ensureChrome() error {
 	return h.Bridge.EnsureChrome(h.Config)
+}
+
+// useLite returns true when the engine router routes this operation to lite.
+func (h *Handlers) useLite(op engine.Capability, url string) bool {
+	return h.Router != nil && h.Router.UseLite(op, url)
 }
 
 func (h *Handlers) RegisterRoutes(mux *http.ServeMux, doShutdown func()) {
