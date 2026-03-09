@@ -52,6 +52,9 @@ type Task struct {
 	Result any    `json:"result,omitempty"`
 	Error  string `json:"error,omitempty"`
 
+	// CallbackURL receives a POST with the task snapshot on completion.
+	CallbackURL string `json:"callbackUrl,omitempty"`
+
 	// position is the queue position at submission time.
 	Position int `json:"position,omitempty"`
 }
@@ -120,19 +123,21 @@ func (t *Task) Snapshot() *Task {
 		LatencyMs:   t.LatencyMs,
 		Result:      t.Result,
 		Error:       t.Error,
+		CallbackURL: t.CallbackURL,
 		Position:    t.Position,
 	}
 }
 
 // SubmitRequest is the JSON body for POST /tasks.
 type SubmitRequest struct {
-	AgentID  string         `json:"agentId"`
-	Action   string         `json:"action"`
-	TabID    string         `json:"tabId,omitempty"`
-	Ref      string         `json:"ref,omitempty"`
-	Params   map[string]any `json:"params,omitempty"`
-	Priority int            `json:"priority,omitempty"`
-	Deadline string         `json:"deadline,omitempty"`
+	AgentID     string         `json:"agentId"`
+	Action      string         `json:"action"`
+	TabID       string         `json:"tabId,omitempty"`
+	Ref         string         `json:"ref,omitempty"`
+	Params      map[string]any `json:"params,omitempty"`
+	Priority    int            `json:"priority,omitempty"`
+	Deadline    string         `json:"deadline,omitempty"`
+	CallbackURL string         `json:"callbackUrl,omitempty"`
 }
 
 // Validate checks that the request has the minimum required fields.

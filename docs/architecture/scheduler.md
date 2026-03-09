@@ -22,6 +22,8 @@ In dashboard mode, the scheduler is created only when `scheduler.enabled` is tru
 - `GET /tasks`
 - `GET /tasks/{id}`
 - `POST /tasks/{id}/cancel`
+- `GET /scheduler/stats`
+- `POST /tasks/batch`
 
 ## High-Level Flow
 
@@ -182,3 +184,77 @@ That means it does not currently provide:
 - persistent queue storage
 - durable recovery after process restart
 - a separate task execution DSL
+
+---
+
+## Phase 2 -- Observability Layer
+
+### Metrics
+
+The scheduler maintains global and per-agent counters via the `Metrics` struct. Global counters use `atomic.Uint64` for lock-free increments. Per-agent counters use a sharded mutex pattern (`agentMetricEntry`) to avoid global lock contention.
+
+Tracked counters:
+
+- `TasksSubmitted`, `TasksCompleted`, `TasksFailed`
+- `TasksCancelled`, `TasksRejected`, `TasksExpired`
+- `DispatchTotal` and cumulative `DispatchLatency` (for average dispatch latency calculation)
+
+`Metrics.Snapshot()` returns a `MetricsSnapshot` -- a point-in-time serializable copy that includes per-agent breakdowns.
+
+### Stats Endpoint
+
+`GET /scheduler/stats` exposes three sections:
+
+- **queue** -- current queued/inflight counts from `QueueStats()`
+- **metrics** -- snapshot from `Metrics.Snapshot()`
+- **config** -- current scheduler configuration values
+
+### Lifecycle Logging
+
+Key scheduler events are logged via `slog`:
+
+- task submission, dispatch, completion, failure, cancellation
+- queue admission rejections
+- config reload events
+- webhook delivery outcomes
+
+### Webhook Delivery
+
+When a task has a `callbackUrl` and reaches a terminal state, the scheduler sends a POST with the task snapshot as JSON. This runs asynchronously in a goroutine from `finishTask()`.
+
+Security constraints:
+
+- only `http` and `https` schemes are accepted (SSRF mitigation)
+- a dedicated `http.Client` with a 10-second timeout prevents hanging connections
+- delivery failures are logged but do not affect task state
+
+Custom headers are sent: `X-PinchTab-Event: task.completed` and `X-PinchTab-Task-ID`.
+
+---
+
+## Phase 3 -- Hardening Layer
+
+### Batch Submission
+
+`POST /tasks/batch` accepts an array of task definitions (up to 50) sharing a single `agentId` and optional `callbackUrl`. Each task is submitted individually through `Submit()`, so queue admission limits apply per-task.
+
+The batch endpoint supports partial failure: if some tasks are rejected (queue full), the accepted tasks are still submitted and the response includes per-task status.
+
+### Config Hot-Reload
+
+`ReloadConfig(cfg Config)` updates tuning knobs at runtime:
+
+- queue limits via `queue.SetLimits(maxQueue, maxPerAgent)`
+- inflight limits via `cfgMu`-protected config fields
+- result TTL via `results.SetTTL(ttl)`
+
+Zero values in the reload config are ignored, preserving the existing setting.
+
+`ConfigWatcher` is a background goroutine that periodically calls a user-supplied `loadFn() (Config, error)` and applies changes via `ReloadConfig`. It can be started and stopped cleanly.
+
+### SetLimits and SetTTL
+
+The queue and result store expose safe runtime mutators:
+
+- `TaskQueue.SetLimits(maxQueue, maxPerAgent)` -- atomically updates admission thresholds
+- `ResultStore.SetTTL(ttl)` -- updates the eviction window for terminal task snapshots

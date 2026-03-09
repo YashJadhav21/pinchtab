@@ -68,6 +68,7 @@ Tasks are scheduler-owned records with these main fields:
 | `result` | executor response payload |
 | `error` | terminal error message |
 | `position` | queue position at submission time |
+| `callbackUrl` | optional webhook URL for terminal state notification |
 
 Task IDs are currently generated as `tsk_XXXXXXXX`, but callers should still treat them as opaque IDs.
 
@@ -106,6 +107,7 @@ Request fields:
 | `params` | no | action-specific fields merged into the executor request body |
 | `priority` | no | lower number means higher priority |
 | `deadline` | no | RFC3339 timestamp; defaults to `now + 60s` |
+| `callbackUrl` | no | webhook URL; receives POST with task snapshot on terminal state |
 
 Important:
 
@@ -284,3 +286,170 @@ In practice, task payloads should use the same action fields that the immediate 
 - across agents, the scheduler prefers the agent with the fewest in-flight tasks
 - if a queued task passes its deadline before execution starts, it is marked failed with `deadline exceeded while queued`
 - terminal task snapshots are retained in memory for `resultTTLSec`
+
+---
+
+## Phase 2 -- Observability
+
+### Scheduler Stats
+
+`GET /scheduler/stats` returns a snapshot of queue state, runtime metrics, and configuration.
+
+```bash
+curl http://localhost:9867/scheduler/stats
+# Response
+{
+  "queue": {
+    "totalQueued": 5,
+    "totalInflight": 2,
+    "agentCounts": {
+      "agent-crawl-01": 3,
+      "agent-scrape-02": 2
+    }
+  },
+  "metrics": {
+    "tasksSubmitted": 42,
+    "tasksCompleted": 35,
+    "tasksFailed": 3,
+    "tasksCancelled": 2,
+    "tasksRejected": 1,
+    "tasksExpired": 1,
+    "dispatchCount": 38,
+    "avgDispatchLatencyMs": 12.5,
+    "agents": {
+      "agent-crawl-01": {
+        "submitted": 25,
+        "completed": 22,
+        "failed": 2,
+        "cancelled": 1,
+        "rejected": 0
+      }
+    }
+  },
+  "config": {
+    "strategy": "fair-fifo",
+    "maxQueueSize": 1000,
+    "maxPerAgent": 100,
+    "maxInflight": 20,
+    "maxPerAgentFlight": 10,
+    "workerCount": 4,
+    "resultTTL": "5m0s"
+  }
+}
+```
+
+#### Metrics Fields
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `tasksSubmitted` | uint64 | total tasks accepted since startup |
+| `tasksCompleted` | uint64 | tasks that finished successfully |
+| `tasksFailed` | uint64 | tasks that finished with an error |
+| `tasksCancelled` | uint64 | tasks cancelled via `POST /tasks/{id}/cancel` |
+| `tasksRejected` | uint64 | tasks rejected at admission (queue full) |
+| `tasksExpired` | uint64 | queued tasks that exceeded their deadline |
+| `dispatchCount` | uint64 | number of tasks dispatched to workers |
+| `avgDispatchLatencyMs` | float64 | average time from queue entry to dispatch start |
+| `agents` | object | per-agent breakdown (submitted, completed, failed, cancelled, rejected) |
+
+### Webhook Callbacks
+
+Tasks can include a `callbackUrl` field. When the task reaches a terminal state (`done`, `failed`, or `cancelled`), the scheduler delivers a POST with the task snapshot to that URL.
+
+```bash
+curl -X POST http://localhost:9867/tasks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agentId": "my-agent",
+    "action": "click",
+    "tabId": "8f9c7d4e1234567890abcdef12345678",
+    "callbackUrl": "https://example.com/hooks/task-done"
+  }'
+```
+
+Webhook behavior:
+
+- delivery is best-effort: failures are logged but do not affect task state
+- only `http` and `https` schemes are allowed (SSRF protection)
+- a dedicated HTTP client with a 10-second timeout is used
+- custom headers are sent: `X-PinchTab-Event: task.completed` and `X-PinchTab-Task-ID: <taskId>`
+
+The `callbackUrl` field is stored on the task and returned in `GET /tasks/{id}`.
+
+---
+
+## Phase 3 -- Hardening
+
+### Batch Task Submission
+
+`POST /tasks/batch` submits multiple tasks in a single request. All tasks in the batch share the same `agentId` and optional `callbackUrl`.
+
+```bash
+curl -X POST http://localhost:9867/tasks/batch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agentId": "agent-crawl-01",
+    "callbackUrl": "https://example.com/hooks/batch",
+    "tasks": [
+      { "action": "click", "tabId": "TAB_ID", "params": { "selector": "#btn" } },
+      { "action": "scroll", "tabId": "TAB_ID", "params": { "scrollY": 400 } },
+      { "action": "hover", "tabId": "TAB_ID", "params": { "selector": "h1" }, "priority": 1 }
+    ]
+  }'
+# Response (202 Accepted)
+{
+  "tasks": [
+    { "taskId": "tsk_aaaa1111", "state": "queued", "position": 1 },
+    { "taskId": "tsk_bbbb2222", "state": "queued", "position": 2 },
+    { "taskId": "tsk_cccc3333", "state": "queued", "position": 3 }
+  ],
+  "submitted": 3
+}
+```
+
+#### Batch Request Fields
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `agentId` | yes | shared across all tasks in the batch |
+| `callbackUrl` | no | webhook URL applied to every task |
+| `tasks` | yes | array of task definitions (1–50) |
+
+Each task definition supports the same fields as a single task submit (`action`, `tabId`, `ref`, `params`, `priority`, `deadline`) except `agentId` and `callbackUrl` which are inherited from the batch.
+
+#### Batch Validation
+
+| Condition | Response |
+| --- | --- |
+| missing `agentId` | `400 Bad Request` |
+| empty `tasks` array | `400 Bad Request` |
+| more than 50 tasks | `400 Bad Request` with `batch_too_large` code |
+| invalid JSON body | `400 Bad Request` |
+
+Partial failure: if some tasks are rejected by admission (queue full), the accepted tasks are still submitted. The response includes each task's status individually.
+
+### Config Hot-Reload
+
+`ReloadConfig(cfg)` updates queue limits, inflight limits, and result TTL at runtime without restarting the scheduler.
+
+Reloadable fields:
+
+| Field | What Changes |
+| --- | --- |
+| `maxQueueSize`, `maxPerAgent` | queue admission limits via `SetLimits()` |
+| `maxInflight`, `maxPerAgentFlight` | concurrency limits (protected by `cfgMu`) |
+| `resultTTL` | result store eviction window via `SetTTL()` |
+
+Zero values are ignored (the existing setting is preserved).
+
+#### ConfigWatcher
+
+`ConfigWatcher` runs a background goroutine that periodically re-reads the config and calls `ReloadConfig`. Create with:
+
+```go
+cw := scheduler.NewConfigWatcher(30*time.Second, loadFn, sched)
+cw.Start()
+defer cw.Stop()
+```
+
+`loadFn` is a `func() (Config, error)` that reads the current config from disk or environment.

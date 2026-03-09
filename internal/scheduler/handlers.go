@@ -14,6 +14,8 @@ func (s *Scheduler) RegisterHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("GET /tasks", s.handleList)
 	mux.HandleFunc("GET /tasks/{id}", s.handleGet)
 	mux.HandleFunc("POST /tasks/{id}/cancel", s.handleCancel)
+	mux.HandleFunc("GET /scheduler/stats", s.handleStats)
+	mux.HandleFunc("POST /tasks/batch", s.handleBatch)
 }
 
 func (s *Scheduler) handleSubmit(w http.ResponseWriter, r *http.Request) {
@@ -106,4 +108,22 @@ func (s *Scheduler) handleList(w http.ResponseWriter, r *http.Request) {
 		tasks = []*Task{}
 	}
 	web.JSON(w, 200, map[string]any{"tasks": tasks, "count": len(tasks)})
+}
+
+func (s *Scheduler) handleStats(w http.ResponseWriter, _ *http.Request) {
+	queue := s.QueueStats()
+	metrics := s.GetMetrics()
+	web.JSON(w, 200, map[string]any{
+		"queue":   queue,
+		"metrics": metrics,
+		"config": map[string]any{
+			"strategy":          s.cfg.Strategy,
+			"maxQueueSize":      s.cfg.MaxQueueSize,
+			"maxPerAgent":       s.cfg.MaxPerAgent,
+			"maxInflight":       s.cfg.MaxInflight,
+			"maxPerAgentFlight": s.cfg.MaxPerAgentFlight,
+			"workerCount":       s.cfg.WorkerCount,
+			"resultTTL":         s.cfg.ResultTTL.String(),
+		},
+	})
 }

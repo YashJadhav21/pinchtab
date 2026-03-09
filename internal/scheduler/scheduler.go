@@ -29,6 +29,8 @@ type Config struct {
 	MaxPerAgentFlight int           `json:"maxPerAgentInflight"`
 	ResultTTL         time.Duration `json:"resultTTL"`
 	WorkerCount       int           `json:"workerCount"`
+	MaxBatchSize      int           `json:"maxBatchSize"`
+	WatcherInterval   time.Duration `json:"watcherInterval"`
 }
 
 // DefaultConfig returns safe defaults.
@@ -41,20 +43,27 @@ func DefaultConfig() Config {
 		MaxPerAgentFlight: 10,
 		ResultTTL:         5 * time.Minute,
 		WorkerCount:       4,
+		MaxBatchSize:      50,
+		WatcherInterval:   30 * time.Second,
 	}
 }
 
 // Scheduler is the core dispatch engine.
 type Scheduler struct {
 	cfg      Config
+	cfgMu    sync.RWMutex
 	queue    *TaskQueue
 	results  *ResultStore
 	resolver InstanceResolver
 	client   *http.Client
+	metrics  *Metrics
 
 	// tracks all live tasks (queued + in-flight) for lookup by ID.
 	live   map[string]*Task
 	liveMu sync.RWMutex
+
+	// webhookSem bounds the number of concurrent webhook delivery goroutines.
+	webhookSem chan struct{}
 
 	// cancellation
 	cancels   map[string]context.CancelFunc
@@ -85,16 +94,24 @@ func New(cfg Config, resolver InstanceResolver) *Scheduler {
 	if cfg.WorkerCount <= 0 {
 		cfg.WorkerCount = 4
 	}
+	if cfg.MaxBatchSize <= 0 {
+		cfg.MaxBatchSize = 50
+	}
+	if cfg.WatcherInterval <= 0 {
+		cfg.WatcherInterval = 30 * time.Second
+	}
 
 	return &Scheduler{
-		cfg:      cfg,
-		queue:    NewTaskQueue(cfg.MaxQueueSize, cfg.MaxPerAgent),
-		results:  NewResultStore(cfg.ResultTTL),
-		resolver: resolver,
-		client:   &http.Client{Timeout: 60 * time.Second},
-		live:     make(map[string]*Task),
-		cancels:  make(map[string]context.CancelFunc),
-		stopCh:   make(chan struct{}),
+		cfg:        cfg,
+		queue:      NewTaskQueue(cfg.MaxQueueSize, cfg.MaxPerAgent),
+		results:    NewResultStore(cfg.ResultTTL),
+		resolver:   resolver,
+		client:     &http.Client{Timeout: 60 * time.Second},
+		metrics:    newMetrics(),
+		live:       make(map[string]*Task),
+		cancels:    make(map[string]context.CancelFunc),
+		stopCh:     make(chan struct{}),
+		webhookSem: make(chan struct{}, 16),
 	}
 }
 
@@ -156,16 +173,17 @@ func (s *Scheduler) Submit(req SubmitRequest) (*Task, error) {
 	}
 
 	t := &Task{
-		ID:        generateTaskID(),
-		AgentID:   req.AgentID,
-		Action:    req.Action,
-		TabID:     req.TabID,
-		Ref:       req.Ref,
-		Params:    req.Params,
-		Priority:  req.Priority,
-		State:     StateQueued,
-		Deadline:  deadline,
-		CreatedAt: now,
+		ID:          generateTaskID(),
+		AgentID:     req.AgentID,
+		Action:      req.Action,
+		TabID:       req.TabID,
+		Ref:         req.Ref,
+		Params:      req.Params,
+		Priority:    req.Priority,
+		State:       StateQueued,
+		Deadline:    deadline,
+		CreatedAt:   now,
+		CallbackURL: req.CallbackURL,
 	}
 
 	pos, err := s.queue.Enqueue(t)
@@ -173,6 +191,8 @@ func (s *Scheduler) Submit(req SubmitRequest) (*Task, error) {
 		t.State = StateRejected
 		t.Error = err.Error()
 		s.results.Store(t)
+		s.metrics.recordReject(req.AgentID)
+		slog.Warn("task rejected", "task", t.ID, "agent", req.AgentID, "err", err)
 		return t, fmt.Errorf("rejected: %w", err)
 	}
 
@@ -183,6 +203,8 @@ func (s *Scheduler) Submit(req SubmitRequest) (*Task, error) {
 	s.liveMu.Unlock()
 
 	s.results.Store(t)
+	s.metrics.recordSubmit(req.AgentID)
+	slog.Info("task submitted", "task", t.ID, "agent", req.AgentID, "action", t.Action, "priority", t.Priority, "position", pos)
 	return t, nil
 }
 
@@ -233,6 +255,9 @@ func (s *Scheduler) Cancel(taskID string) error {
 		return fmt.Errorf("cancel failed: %w", err)
 	}
 
+	s.metrics.recordCancel(t.AgentID)
+	slog.Info("task cancelled", "task", t.ID, "agent", t.AgentID, "previousState", state)
+
 	s.finishTask(t)
 	return nil
 }
@@ -247,6 +272,19 @@ func (s *Scheduler) QueueStats() QueueStats {
 	return s.queue.Stats()
 }
 
+// GetMetrics returns a snapshot of all scheduler metrics.
+func (s *Scheduler) GetMetrics() MetricsSnapshot {
+	return s.metrics.Snapshot()
+}
+
+func (s *Scheduler) inflightLimits() (perAgent, global int) {
+	s.cfgMu.RLock()
+	perAgent = s.cfg.MaxPerAgentFlight
+	global = s.cfg.MaxInflight
+	s.cfgMu.RUnlock()
+	return
+}
+
 func (s *Scheduler) worker(id int) {
 	defer s.wg.Done()
 	for {
@@ -256,7 +294,7 @@ func (s *Scheduler) worker(id int) {
 		default:
 		}
 
-		task := s.queue.Dequeue(s.cfg.MaxPerAgentFlight, s.cfg.MaxInflight)
+		task := s.queue.Dequeue(s.inflightLimits())
 		if task == nil {
 			select {
 			case <-s.stopCh:
@@ -271,11 +309,14 @@ func (s *Scheduler) worker(id int) {
 }
 
 func (s *Scheduler) dispatch(t *Task) {
+	dispatchStart := timeNow()
+
 	if err := t.SetState(StateAssigned); err != nil {
 		slog.Warn("task state transition failed", "task", t.ID, "err", err)
 		s.finishTask(t)
 		return
 	}
+	slog.Info("task assigned", "task", t.ID, "agent", t.AgentID, "action", t.Action)
 	s.results.Store(t)
 
 	ctx, cancel := context.WithDeadline(context.Background(), t.Deadline)
@@ -296,20 +337,28 @@ func (s *Scheduler) dispatch(t *Task) {
 		s.finishTask(t)
 		return
 	}
+	slog.Info("task running", "task", t.ID, "agent", t.AgentID)
 	s.results.Store(t)
 
 	result, execErr := s.executeTask(ctx, t)
+
+	latency := timeNow().Sub(dispatchStart)
+	s.metrics.recordDispatchLatency(latency)
 
 	if execErr != nil {
 		t.Error = execErr.Error()
 		if stateErr := t.SetState(StateFailed); stateErr != nil {
 			slog.Warn("failed to mark task as failed", "task", t.ID, "err", stateErr)
 		}
+		s.metrics.recordFail(t.AgentID)
+		slog.Info("task failed", "task", t.ID, "agent", t.AgentID, "err", execErr, "latencyMs", latency.Milliseconds())
 	} else {
 		t.Result = result
 		if stateErr := t.SetState(StateDone); stateErr != nil {
 			slog.Warn("failed to mark task as done", "task", t.ID, "err", stateErr)
 		}
+		s.metrics.recordComplete(t.AgentID)
+		slog.Info("task completed", "task", t.ID, "agent", t.AgentID, "action", t.Action, "latencyMs", latency.Milliseconds())
 	}
 
 	s.finishTask(t)
@@ -382,6 +431,19 @@ func (s *Scheduler) finishTask(t *Task) {
 	s.liveMu.Lock()
 	delete(s.live, t.ID)
 	s.liveMu.Unlock()
+
+	// Fire webhook asynchronously if configured.
+	if t.CallbackURL != "" && t.GetState().IsTerminal() {
+		select {
+		case s.webhookSem <- struct{}{}:
+			go func() {
+				defer func() { <-s.webhookSem }()
+				sendWebhook(t.CallbackURL, t)
+			}()
+		default:
+			slog.Warn("webhook: too many in-flight deliveries, dropping", "task", t.ID)
+		}
+	}
 }
 
 func (s *Scheduler) deadlineReaper() {
@@ -400,6 +462,9 @@ func (s *Scheduler) deadlineReaper() {
 				if err := t.SetState(StateFailed); err != nil {
 					slog.Warn("deadline reaper state transition failed", "task", t.ID, "err", err)
 				}
+				s.metrics.recordExpire()
+				s.metrics.recordFail(t.AgentID)
+				slog.Info("task expired", "task", t.ID, "agent", t.AgentID)
 				s.finishTask(t)
 			}
 		}

@@ -48,6 +48,13 @@ func (rs *ResultStore) Stop() {
 	}
 }
 
+// SetTTL updates the eviction TTL at runtime.
+func (rs *ResultStore) SetTTL(ttl time.Duration) {
+	rs.mu.Lock()
+	rs.ttl = ttl
+	rs.mu.Unlock()
+}
+
 // Store saves a task snapshot into the result store.
 func (rs *ResultStore) Store(t *Task) {
 	snap := t.Snapshot()
