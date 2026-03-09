@@ -67,17 +67,20 @@ func (m *Metrics) recordExpire() {
 }
 
 func (m *Metrics) recordDispatchLatency(d time.Duration) {
+	if d <= 0 {
+		d = time.Nanosecond
+	}
 	m.DispatchTotal.Add(1)
-	m.DispatchLatency.Add(uint64(d.Milliseconds()))
+	m.DispatchLatency.Add(uint64(d.Nanoseconds()))
 }
 
 // Snapshot returns a point-in-time copy of all metrics.
 func (m *Metrics) Snapshot() MetricsSnapshot {
 	dispatched := m.DispatchTotal.Load()
-	latencySum := m.DispatchLatency.Load()
+	latencyNs := m.DispatchLatency.Load()
 	avgMs := 0.0
 	if dispatched > 0 {
-		avgMs = float64(latencySum) / float64(dispatched)
+		avgMs = float64(latencyNs) / float64(dispatched) / 1e6
 	}
 
 	m.mu.RLock()
