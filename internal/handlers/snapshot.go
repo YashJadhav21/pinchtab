@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -66,17 +67,24 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 	if eng := h.altEngine(engine.CapSnapshot, ""); eng != nil {
 		nodes, err := eng.Snapshot(r.Context(), filter)
 		if err != nil {
-			web.Error(w, 500, fmt.Errorf("%s snapshot: %w", eng.Name(), err))
+			slog.Warn("alt engine snapshot failed, falling back to chrome",
+				"engine", eng.Name(), "err", err)
+			// If Chrome is not available, return the alt engine error directly.
+			if chrErr := h.ensureChrome(); chrErr != nil {
+				web.Error(w, 502, fmt.Errorf("%s snapshot: %w", eng.Name(), err))
+				return
+			}
+			// Fall through to Chrome path below.
+		} else {
+			// Convert to bridge.A11yNode for API compatibility.
+			flat := make([]bridge.A11yNode, len(nodes))
+			for i, n := range nodes {
+				flat[i] = bridge.A11yNode{Ref: n.Ref, Role: n.Role, Name: n.Name, Depth: n.Depth, Value: n.Value}
+			}
+			w.Header().Set("X-Engine", eng.Name())
+			web.JSON(w, 200, map[string]any{"nodes": flat})
 			return
 		}
-		// Convert to bridge.A11yNode for API compatibility.
-		flat := make([]bridge.A11yNode, len(nodes))
-		for i, n := range nodes {
-			flat[i] = bridge.A11yNode{Ref: n.Ref, Role: n.Role, Name: n.Name, Depth: n.Depth, Value: n.Value}
-		}
-		w.Header().Set("X-Engine", eng.Name())
-		web.JSON(w, 200, map[string]any{"nodes": flat})
-		return
 	}
 
 	// Ensure Chrome is initialized

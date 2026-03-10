@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -22,13 +23,20 @@ func (h *Handlers) HandleText(w http.ResponseWriter, r *http.Request) {
 	if eng := h.altEngine(engine.CapText, ""); eng != nil {
 		text, err := eng.Text(r.Context())
 		if err != nil {
-			web.Error(w, 500, fmt.Errorf("%s text: %w", eng.Name(), err))
+			slog.Warn("alt engine text failed, falling back to chrome",
+				"engine", eng.Name(), "err", err)
+			// If Chrome is not available, return the alt engine error directly.
+			if chrErr := h.ensureChrome(); chrErr != nil {
+				web.Error(w, 502, fmt.Errorf("%s text: %w", eng.Name(), err))
+				return
+			}
+			// Fall through to Chrome path below.
+		} else {
+			w.Header().Set("X-Engine", eng.Name())
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			_, _ = w.Write([]byte(text))
 			return
 		}
-		w.Header().Set("X-Engine", eng.Name())
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = w.Write([]byte(text))
-		return
 	}
 
 	// Ensure Chrome is initialized

@@ -2,15 +2,12 @@ package engine
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
-
-	"github.com/chromedp/cdproto/accessibility"
 )
 
 func TestLightpandaEngine_Name(t *testing.T) {
-	// Cannot create a full LightpandaEngine without a binary,
-	// but we can test the struct directly.
 	lp := &LightpandaEngine{tabs: make(map[string]*lpTab)}
 	if lp.Name() != "lightpanda" {
 		t.Errorf("Name() = %q, want %q", lp.Name(), "lightpanda")
@@ -68,6 +65,42 @@ func TestLightpandaEngine_TypeNoPage(t *testing.T) {
 	err := lp.Type(t.Context(), "e0", "test")
 	if err == nil {
 		t.Error("expected error when no page loaded")
+	}
+}
+
+func TestLightpandaEngine_ClickNoSelector(t *testing.T) {
+	lp := &LightpandaEngine{
+		tabs:    make(map[string]*lpTab),
+		current: "tab1",
+	}
+	lp.tabs["tab1"] = &lpTab{
+		refs:      make(map[string]int64),
+		selectors: make(map[string]string),
+	}
+	err := lp.Click(t.Context(), "e99")
+	if err == nil {
+		t.Error("expected error for unknown ref")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("error should mention 'not found', got: %v", err)
+	}
+}
+
+func TestLightpandaEngine_TypeNoSelector(t *testing.T) {
+	lp := &LightpandaEngine{
+		tabs:    make(map[string]*lpTab),
+		current: "tab1",
+	}
+	lp.tabs["tab1"] = &lpTab{
+		refs:      make(map[string]int64),
+		selectors: make(map[string]string),
+	}
+	err := lp.Type(t.Context(), "e99", "hello")
+	if err == nil {
+		t.Error("expected error for unknown ref")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("error should mention 'not found', got: %v", err)
 	}
 }
 
@@ -131,166 +164,97 @@ func TestStripHTMLTags(t *testing.T) {
 	}
 }
 
-func TestBuildSnapshotFromAXTree(t *testing.T) {
-	// Create mock AX nodes.
-	makeValue := func(s string) *accessibility.Value {
-		bs, _ := json.Marshal(s)
-		return &accessibility.Value{Value: bs}
-	}
+// ---------- snapshotJS / jsSnapshotNode tests ----------
 
-	nodes := []*accessibility.Node{
-		{
-			NodeID:           "root",
-			Role:             makeValue("WebArea"),
-			Name:             makeValue("Test Page"),
-			ChildIDs:         []accessibility.NodeID{"btn1", "heading1"},
-			BackendDOMNodeID: 1,
-		},
-		{
-			NodeID:           "btn1",
-			Role:             makeValue("button"),
-			Name:             makeValue("Click Me"),
-			BackendDOMNodeID: 10,
-		},
-		{
-			NodeID:           "heading1",
-			Role:             makeValue("heading"),
-			Name:             makeValue("Welcome"),
-			BackendDOMNodeID: 20,
-		},
+func TestSnapshotJS_ReturnsValidJS(t *testing.T) {
+	js := snapshotJS("")
+	if !strings.Contains(js, "function inferRole") {
+		t.Error("snapshotJS should contain inferRole function")
 	}
-
-	refs := make(map[string]int64)
-	result := buildSnapshotFromAXTree(nodes, refs, "")
-
-	if len(result) != 3 {
-		t.Fatalf("expected 3 nodes, got %d", len(result))
+	if !strings.Contains(js, "JSON.stringify") {
+		t.Error("snapshotJS should return JSON.stringify")
 	}
-
-	// First should be WebArea (root).
-	if result[0].Role != "WebArea" {
-		t.Errorf("node[0].Role = %q, want %q", result[0].Role, "WebArea")
+	if strings.Contains(js, "INTERACTIVE_ONLY = true") {
+		t.Error("snapshotJS('') should set INTERACTIVE_ONLY = false")
 	}
-	if result[0].Depth != 0 {
-		t.Errorf("node[0].Depth = %d, want 0", result[0].Depth)
-	}
+}
 
-	// Button should be interactive.
-	var btnNode *SnapshotNode
-	for i := range result {
-		if result[i].Role == "button" {
-			btnNode = &result[i]
-			break
+func TestSnapshotJS_InteractiveFilter(t *testing.T) {
+	js := snapshotJS("interactive")
+	if !strings.Contains(js, "INTERACTIVE_ONLY = true") {
+		t.Error("snapshotJS('interactive') should set INTERACTIVE_ONLY = true")
+	}
+}
+
+func TestSnapshotJS_NonInteractiveFilter(t *testing.T) {
+	js := snapshotJS("other")
+	if !strings.Contains(js, "INTERACTIVE_ONLY = false") {
+		t.Error("snapshotJS with non-interactive filter should set INTERACTIVE_ONLY = false")
+	}
+}
+
+func TestJsonString(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"hello", `"hello"`},
+		{`has "quotes"`, `"has \"quotes\""`},
+		{"has\nnewline", `"has\nnewline"`},
+		{"", `""`},
+		{`back\slash`, `"back\\slash"`},
+		{"<script>alert('xss')</script>", `"\u003cscript\u003ealert('xss')\u003c/script\u003e"`},
+	}
+	for _, tt := range tests {
+		got := jsonString(tt.input)
+		if got != tt.want {
+			t.Errorf("jsonString(%q) = %s, want %s", tt.input, got, tt.want)
 		}
 	}
-	if btnNode == nil {
-		t.Fatal("button node not found")
-	}
-	if !btnNode.Interactive {
-		t.Error("button should be interactive")
-	}
-	if btnNode.Name != "Click Me" {
-		t.Errorf("button name = %q, want %q", btnNode.Name, "Click Me")
-	}
-	if btnNode.Depth != 1 {
-		t.Errorf("button depth = %d, want 1", btnNode.Depth)
+}
+
+func TestJsSnapshotNode_Unmarshal(t *testing.T) {
+	raw := `[
+		{"role":"button","name":"Click Me","tag":"button","value":"","depth":1,"interactive":true,"selector":"#btn1"},
+		{"role":"heading","name":"Welcome","tag":"h1","value":"","depth":0,"interactive":false,"selector":"h1"},
+		{"role":"textbox","name":"Email","tag":"input","value":"test@example.com","depth":2,"interactive":true,"selector":"#email"}
+	]`
+
+	var nodes []jsSnapshotNode
+	if err := json.Unmarshal([]byte(raw), &nodes); err != nil {
+		t.Fatalf("unmarshal: %v", err)
 	}
 
-	// Verify refs mapping.
-	if _, ok := refs[btnNode.Ref]; !ok {
-		t.Error("button ref not in refs map")
+	if len(nodes) != 3 {
+		t.Fatalf("expected 3 nodes, got %d", len(nodes))
+	}
+
+	// Button node.
+	if nodes[0].Role != "button" || nodes[0].Name != "Click Me" || !nodes[0].Interactive {
+		t.Errorf("button node = %+v", nodes[0])
+	}
+	if nodes[0].Selector != "#btn1" {
+		t.Errorf("button selector = %q, want %q", nodes[0].Selector, "#btn1")
+	}
+
+	// Heading node.
+	if nodes[1].Role != "heading" || nodes[1].Interactive {
+		t.Errorf("heading node = %+v", nodes[1])
+	}
+
+	// Textbox with value.
+	if nodes[2].Role != "textbox" || nodes[2].Value != "test@example.com" {
+		t.Errorf("textbox node = %+v", nodes[2])
 	}
 }
 
-func TestBuildSnapshotFromAXTree_InteractiveFilter(t *testing.T) {
-	makeValue := func(s string) *accessibility.Value {
-		bs, _ := json.Marshal(s)
-		return &accessibility.Value{Value: bs}
+func TestJsSnapshotNode_EmptyArray(t *testing.T) {
+	var nodes []jsSnapshotNode
+	if err := json.Unmarshal([]byte("[]"), &nodes); err != nil {
+		t.Fatalf("unmarshal empty: %v", err)
 	}
-
-	nodes := []*accessibility.Node{
-		{
-			NodeID:           "root",
-			Role:             makeValue("WebArea"),
-			Name:             makeValue("Page"),
-			BackendDOMNodeID: 1,
-		},
-		{
-			NodeID:           "btn",
-			Role:             makeValue("button"),
-			Name:             makeValue("Submit"),
-			BackendDOMNodeID: 10,
-		},
-		{
-			NodeID:           "heading",
-			Role:             makeValue("heading"),
-			Name:             makeValue("Title"),
-			BackendDOMNodeID: 20,
-		},
-	}
-
-	refs := make(map[string]int64)
-	result := buildSnapshotFromAXTree(nodes, refs, "interactive")
-
-	// Only button should pass the interactive filter.
-	if len(result) != 1 {
-		t.Fatalf("expected 1 interactive node, got %d", len(result))
-	}
-	if result[0].Role != "button" {
-		t.Errorf("expected button, got %q", result[0].Role)
-	}
-}
-
-func TestBuildSnapshotFromAXTree_SkipsNoneAndGeneric(t *testing.T) {
-	makeValue := func(s string) *accessibility.Value {
-		bs, _ := json.Marshal(s)
-		return &accessibility.Value{Value: bs}
-	}
-
-	nodes := []*accessibility.Node{
-		{
-			NodeID: "n1",
-			Role:   makeValue("none"),
-		},
-		{
-			NodeID: "n2",
-			Role:   makeValue("InlineTextBox"),
-		},
-		{
-			NodeID: "n3",
-			Role:   makeValue("generic"),
-			Name:   makeValue(""),
-		},
-		{
-			NodeID:           "n4",
-			Role:             makeValue("button"),
-			Name:             makeValue("OK"),
-			BackendDOMNodeID: 5,
-		},
-	}
-
-	refs := make(map[string]int64)
-	result := buildSnapshotFromAXTree(nodes, refs, "")
-
-	if len(result) != 1 {
-		t.Fatalf("expected 1 node (button only), got %d", len(result))
-	}
-	if result[0].Role != "button" {
-		t.Errorf("expected button, got %q", result[0].Role)
-	}
-}
-
-func TestAxValueStr(t *testing.T) {
-	// nil value.
-	if s := axValueStr(nil); s != "" {
-		t.Errorf("axValueStr(nil) = %q, want empty", s)
-	}
-
-	// Valid JSON string value.
-	bs, _ := json.Marshal("hello")
-	v := &accessibility.Value{Value: bs}
-	if s := axValueStr(v); s != "hello" {
-		t.Errorf("axValueStr() = %q, want %q", s, "hello")
+	if len(nodes) != 0 {
+		t.Errorf("expected 0 nodes, got %d", len(nodes))
 	}
 }
 

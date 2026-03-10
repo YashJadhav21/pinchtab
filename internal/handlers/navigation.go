@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -99,12 +100,19 @@ func (h *Handlers) HandleNavigate(w http.ResponseWriter, r *http.Request) {
 	if eng := h.altEngine(engine.CapNavigate, req.URL); eng != nil {
 		result, err := eng.Navigate(r.Context(), req.URL)
 		if err != nil {
-			web.Error(w, 502, fmt.Errorf("%s navigate: %w", eng.Name(), err))
+			slog.Warn("alt engine navigate failed, falling back to chrome",
+				"engine", eng.Name(), "url", req.URL, "err", err)
+			// If Chrome is not available, return the alt engine error directly.
+			if chrErr := h.ensureChrome(); chrErr != nil {
+				web.Error(w, 502, fmt.Errorf("%s navigate: %w", eng.Name(), err))
+				return
+			}
+			// Fall through to Chrome path below.
+		} else {
+			w.Header().Set("X-Engine", eng.Name())
+			web.JSON(w, 200, map[string]any{"tabId": result.TabID, "url": result.URL, "title": result.Title})
 			return
 		}
-		w.Header().Set("X-Engine", eng.Name())
-		web.JSON(w, 200, map[string]any{"tabId": result.TabID, "url": result.URL, "title": result.Title})
-		return
 	}
 
 	// Ensure Chrome is initialized

@@ -15,7 +15,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chromedp/cdproto/accessibility"
 	"github.com/chromedp/chromedp"
 )
 
@@ -24,9 +23,11 @@ var ErrLightpandaNotSupported = errors.New("operation not supported in lightpand
 
 // lpTab tracks a single Lightpanda browser tab.
 type lpTab struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	refs   map[string]int64 // ref → backend DOM node ID
+	ctx       context.Context
+	cancel    context.CancelFunc
+	lastURL   string             // URL last navigated to (for re-navigation)
+	refs      map[string]int64   // ref → index (for backward compat)
+	selectors map[string]string  // ref → CSS selector (for JS click/type)
 }
 
 // LightpandaEngine implements Engine by managing a Lightpanda subprocess
@@ -105,37 +106,61 @@ func (lp *LightpandaEngine) Capabilities() []Capability {
 	return []Capability{CapNavigate, CapSnapshot, CapText, CapClick, CapType}
 }
 
+// freshContext creates a new chromedp context, navigates to the given
+// URL, and returns the context. The caller must call cancel when done.
+// Lightpanda may drop the websocket after each command batch, so we
+// create a fresh context for every API operation.
+func (lp *LightpandaEngine) freshContext(url string, timeout time.Duration) (context.Context, context.CancelFunc, error) {
+	tabCtx, tabCancel := chromedp.NewContext(lp.allocCtx)
+	opCtx, opCancel := context.WithTimeout(tabCtx, timeout)
+
+	if err := chromedp.Run(opCtx, chromedp.Navigate(url)); err != nil {
+		opCancel()
+		tabCancel()
+		return nil, nil, fmt.Errorf("lightpanda navigate %s: %w", url, err)
+	}
+
+	cancel := func() { opCancel(); tabCancel() }
+	return opCtx, cancel, nil
+}
+
 // Navigate opens a URL via Lightpanda's CDP endpoint.
 func (lp *LightpandaEngine) Navigate(ctx context.Context, url string) (*NavigateResult, error) {
 	lp.mu.Lock()
 	defer lp.mu.Unlock()
 
-	// Create a new tab via CDP.
-	tabCtx, tabCancel := chromedp.NewContext(lp.allocCtx)
-
-	navCtx, navCancel := context.WithTimeout(tabCtx, 30*time.Second)
-	defer navCancel()
-
-	if err := chromedp.Run(navCtx, chromedp.Navigate(url)); err != nil {
-		tabCancel()
-		return nil, fmt.Errorf("lightpanda navigate: %w", err)
+	opCtx, cancel, err := lp.freshContext(url, 30*time.Second)
+	if err != nil {
+		return nil, err
 	}
 
-	// Wait briefly for title to populate.
+	// Read title and current URL before closing the connection.
 	var title string
-	_ = chromedp.Run(navCtx, chromedp.Title(&title))
+	_ = chromedp.Run(opCtx, chromedp.Title(&title))
 
 	var currentURL string
-	if err := chromedp.Run(navCtx, chromedp.Location(&currentURL)); err != nil {
+	if err := chromedp.Run(opCtx, chromedp.Location(&currentURL)); err != nil {
 		currentURL = url
 	}
 
+	// Close the context — Lightpanda doesn't persist connections.
+	cancel()
+
 	lp.seq++
 	tabID := fmt.Sprintf("lp-%d", lp.seq)
+
+	// Clean up old tab entries.
+	for id, tab := range lp.tabs {
+		if tab.cancel != nil {
+			tab.cancel()
+		}
+		delete(lp.tabs, id)
+	}
+
 	lp.tabs[tabID] = &lpTab{
-		ctx:    tabCtx,
-		cancel: tabCancel,
-		refs:   make(map[string]int64),
+		lastURL:   url,
+		refs:      make(map[string]int64),
+		selectors: make(map[string]string),
 	}
 	lp.current = tabID
 
@@ -146,7 +171,9 @@ func (lp *LightpandaEngine) Navigate(ctx context.Context, url string) (*Navigate
 	}, nil
 }
 
-// Snapshot returns the accessibility tree from Lightpanda.
+// Snapshot returns the DOM tree from Lightpanda using JavaScript evaluation.
+// Lightpanda does not support Accessibility.getFullAXTree, so we walk the DOM
+// via Runtime.evaluate and build an accessibility-style tree in JS.
 func (lp *LightpandaEngine) Snapshot(ctx context.Context, filter string) ([]SnapshotNode, error) {
 	lp.mu.Lock()
 	defer lp.mu.Unlock()
@@ -156,24 +183,47 @@ func (lp *LightpandaEngine) Snapshot(ctx context.Context, filter string) ([]Snap
 		return nil, errors.New("no page loaded")
 	}
 
-	snapCtx, snapCancel := context.WithTimeout(tab.ctx, 15*time.Second)
-	defer snapCancel()
-
-	// Get the full accessibility tree via CDP.
-	var axNodes []*accessibility.Node
-	if err := chromedp.Run(snapCtx, chromedp.ActionFunc(func(ctx context.Context) error {
-		var err error
-		axNodes, err = accessibility.GetFullAXTree().Do(ctx)
-		return err
-	})); err != nil {
+	opCtx, cancel, err := lp.freshContext(tab.lastURL, 30*time.Second)
+	if err != nil {
 		return nil, fmt.Errorf("lightpanda snapshot: %w", err)
 	}
+	defer cancel()
 
+	// JavaScript that walks the DOM and builds a snapshot array.
+	var result string
+	if err := chromedp.Run(opCtx, chromedp.Evaluate(snapshotJS(filter), &result)); err != nil {
+		return nil, fmt.Errorf("lightpanda snapshot eval: %w", err)
+	}
+
+	var jsNodes []jsSnapshotNode
+	if err := json.Unmarshal([]byte(result), &jsNodes); err != nil {
+		return nil, fmt.Errorf("lightpanda snapshot parse: %w", err)
+	}
+
+	// Convert JS nodes to engine SnapshotNodes and populate ref/selector maps.
 	tab.refs = make(map[string]int64)
-	return buildSnapshotFromAXTree(axNodes, tab.refs, filter), nil
+	tab.selectors = make(map[string]string, len(jsNodes))
+	nodes := make([]SnapshotNode, 0, len(jsNodes))
+	for i, n := range jsNodes {
+		ref := fmt.Sprintf("e%d", i)
+		tab.refs[ref] = int64(i)
+		tab.selectors[ref] = n.Selector
+
+		nodes = append(nodes, SnapshotNode{
+			Ref:         ref,
+			Role:        n.Role,
+			Name:        n.Name,
+			Tag:         n.Tag,
+			Value:       n.Value,
+			Depth:       n.Depth,
+			Interactive: n.Interactive,
+		})
+	}
+
+	return nodes, nil
 }
 
-// Text returns the visible text content of the current page.
+// Text returns the visible text content of the current page via JavaScript.
 func (lp *LightpandaEngine) Text(ctx context.Context) (string, error) {
 	lp.mu.Lock()
 	defer lp.mu.Unlock()
@@ -183,52 +233,26 @@ func (lp *LightpandaEngine) Text(ctx context.Context) (string, error) {
 		return "", errors.New("no page loaded")
 	}
 
-	textCtx, textCancel := context.WithTimeout(tab.ctx, 15*time.Second)
-	defer textCancel()
+	opCtx, cancel, err := lp.freshContext(tab.lastURL, 30*time.Second)
+	if err != nil {
+		return "", fmt.Errorf("lightpanda text: %w", err)
+	}
+	defer cancel()
 
 	var text string
-	if err := chromedp.Run(textCtx, chromedp.ActionFunc(func(ctx context.Context) error {
-		// Get document root node.
-		var result json.RawMessage
-		if err := chromedp.FromContext(ctx).Target.Execute(ctx, "DOM.getDocument", nil, &result); err != nil {
-			return err
-		}
-		var doc struct {
-			Root struct {
-				NodeID int64 `json:"nodeId"`
-			} `json:"root"`
-		}
-		if err := json.Unmarshal(result, &doc); err != nil {
-			return err
-		}
-		// Get outer HTML of document.
-		var htmlResult json.RawMessage
-		if err := chromedp.FromContext(ctx).Target.Execute(ctx, "DOM.getOuterHTML", map[string]any{
-			"nodeId": doc.Root.NodeID,
-		}, &htmlResult); err != nil {
-			return err
-		}
-		var outer struct {
-			OuterHTML string `json:"outerHTML"`
-		}
-		if err := json.Unmarshal(htmlResult, &outer); err != nil {
-			return err
-		}
-		text = outer.OuterHTML
-		return nil
-	})); err != nil {
-		// Fallback: try innerText via evaluate.
-		if evalErr := chromedp.Run(textCtx, chromedp.InnerHTML("body", &text, chromedp.ByQuery)); evalErr != nil {
+	if err := chromedp.Run(opCtx, chromedp.Evaluate(`document.body ? document.body.innerText : ""`, &text)); err != nil {
+		// Fallback: try textContent which is more widely supported.
+		var fallback string
+		if err2 := chromedp.Run(opCtx, chromedp.Evaluate(`document.body ? document.body.textContent : ""`, &fallback)); err2 != nil {
 			return "", fmt.Errorf("lightpanda text: %w", err)
 		}
+		text = fallback
 	}
 
-	// Strip HTML tags to extract visible text.
-	text = stripHTMLTags(text)
 	return normalizeWhitespace(text), nil
 }
 
-// Click clicks an element identified by ref.
+// Click clicks an element identified by ref using JavaScript.
 func (lp *LightpandaEngine) Click(ctx context.Context, ref string) error {
 	lp.mu.Lock()
 	defer lp.mu.Unlock()
@@ -238,60 +262,38 @@ func (lp *LightpandaEngine) Click(ctx context.Context, ref string) error {
 		return errors.New("no page loaded")
 	}
 
-	nodeID, ok := tab.refs[ref]
-	if !ok {
+	selector, ok := tab.selectors[ref]
+	if !ok || selector == "" {
 		return fmt.Errorf("ref %q not found (take a snapshot first)", ref)
 	}
 
-	clickCtx, clickCancel := context.WithTimeout(tab.ctx, 10*time.Second)
-	defer clickCancel()
+	opCtx, cancel, err := lp.freshContext(tab.lastURL, 15*time.Second)
+	if err != nil {
+		return fmt.Errorf("lightpanda click: %w", err)
+	}
+	defer cancel()
 
-	return chromedp.Run(clickCtx, chromedp.ActionFunc(func(ctx context.Context) error {
-		// Scroll into view.
-		if err := chromedp.FromContext(ctx).Target.Execute(ctx, "DOM.scrollIntoViewIfNeeded", map[string]any{
-			"backendNodeId": nodeID,
-		}, nil); err != nil {
-			slog.Debug("lightpanda scroll failed (non-fatal)", "err", err)
-		}
-		// Focus the element.
-		if err := chromedp.FromContext(ctx).Target.Execute(ctx, "DOM.focus", map[string]any{
-			"backendNodeId": nodeID,
-		}, nil); err != nil {
-			return fmt.Errorf("focus for click: %w", err)
-		}
-		// Get element box model for coordinates.
-		var result json.RawMessage
-		if err := chromedp.FromContext(ctx).Target.Execute(ctx, "DOM.getBoxModel", map[string]any{
-			"backendNodeId": nodeID,
-		}, &result); err != nil {
-			// Fallback: simulate via JS click.
-			return chromedp.FromContext(ctx).Target.Execute(ctx, "DOM.resolveNode", map[string]any{
-				"backendNodeId": nodeID,
-			}, nil)
-		}
-		var box struct {
-			Model struct {
-				Content []float64 `json:"content"`
-			} `json:"model"`
-		}
-		if err := json.Unmarshal(result, &box); err != nil || len(box.Model.Content) < 4 {
-			return fmt.Errorf("invalid box model for click")
-		}
-		x := (box.Model.Content[0] + box.Model.Content[2]) / 2
-		y := (box.Model.Content[1] + box.Model.Content[5]) / 2
-		// Mouse click.
-		if err := chromedp.FromContext(ctx).Target.Execute(ctx, "Input.dispatchMouseEvent", map[string]any{
-			"type": "mousePressed", "button": "left", "clickCount": 1, "x": x, "y": y,
-		}, nil); err != nil {
-			return err
-		}
-		return chromedp.FromContext(ctx).Target.Execute(ctx, "Input.dispatchMouseEvent", map[string]any{
-			"type": "mouseReleased", "button": "left", "clickCount": 1, "x": x, "y": y,
-		}, nil)
-	}))
+	// Use JavaScript to find and click the element via its unique selector.
+	var success bool
+	js := fmt.Sprintf(`(function() {
+		var el = document.querySelector(%s);
+		if (!el) return false;
+		el.scrollIntoView({block: 'center'});
+		el.focus();
+		el.click();
+		return true;
+	})()`, jsonString(selector))
+
+	if err := chromedp.Run(opCtx, chromedp.Evaluate(js, &success)); err != nil {
+		return fmt.Errorf("lightpanda click: %w", err)
+	}
+	if !success {
+		return fmt.Errorf("element for ref %q not found in DOM", ref)
+	}
+	return nil
 }
 
-// Type enters text into an element identified by ref.
+// Type enters text into an element identified by ref using JavaScript.
 func (lp *LightpandaEngine) Type(ctx context.Context, ref, text string) error {
 	lp.mu.Lock()
 	defer lp.mu.Unlock()
@@ -301,26 +303,35 @@ func (lp *LightpandaEngine) Type(ctx context.Context, ref, text string) error {
 		return errors.New("no page loaded")
 	}
 
-	nodeID, ok := tab.refs[ref]
-	if !ok {
+	selector, ok := tab.selectors[ref]
+	if !ok || selector == "" {
 		return fmt.Errorf("ref %q not found (take a snapshot first)", ref)
 	}
 
-	typeCtx, typeCancel := context.WithTimeout(tab.ctx, 10*time.Second)
-	defer typeCancel()
+	opCtx, cancel, err := lp.freshContext(tab.lastURL, 15*time.Second)
+	if err != nil {
+		return fmt.Errorf("lightpanda type: %w", err)
+	}
+	defer cancel()
 
-	return chromedp.Run(typeCtx, chromedp.ActionFunc(func(ctx context.Context) error {
-		// Focus the element.
-		if err := chromedp.FromContext(ctx).Target.Execute(ctx, "DOM.focus", map[string]any{
-			"backendNodeId": nodeID,
-		}, nil); err != nil {
-			return fmt.Errorf("focus for type: %w", err)
-		}
-		// Type text via Input.insertText.
-		return chromedp.FromContext(ctx).Target.Execute(ctx, "Input.insertText", map[string]any{
-			"text": text,
-		}, nil)
-	}))
+	var success bool
+	js := fmt.Sprintf(`(function() {
+		var el = document.querySelector(%s);
+		if (!el) return false;
+		el.focus();
+		el.value = %s;
+		el.dispatchEvent(new Event('input', {bubbles: true}));
+		el.dispatchEvent(new Event('change', {bubbles: true}));
+		return true;
+	})()`, jsonString(selector), jsonString(text))
+
+	if err := chromedp.Run(opCtx, chromedp.Evaluate(js, &success)); err != nil {
+		return fmt.Errorf("lightpanda type: %w", err)
+	}
+	if !success {
+		return fmt.Errorf("element for ref %q not found in DOM", ref)
+	}
+	return nil
 }
 
 // Close shuts down the Lightpanda subprocess and releases resources.
@@ -463,87 +474,181 @@ func findLightpandaBinary() string {
 	return ""
 }
 
-// ---------- accessibility tree helpers ----------
+// ---------- JavaScript-based DOM helpers ----------
 
-// buildSnapshotFromAXTree converts CDP accessibility nodes to SnapshotNodes.
-func buildSnapshotFromAXTree(axNodes []*accessibility.Node, refs map[string]int64, filter string) []SnapshotNode {
-	if len(axNodes) == 0 {
-		return nil
+// jsSnapshotNode is the Go-side representation of the snapshot node
+// returned by the JavaScript DOM walker.
+type jsSnapshotNode struct {
+	Role        string `json:"role"`
+	Name        string `json:"name"`
+	Tag         string `json:"tag"`
+	Value       string `json:"value"`
+	Depth       int    `json:"depth"`
+	Interactive bool   `json:"interactive"`
+	Selector    string `json:"selector"` // unique CSS selector for click/type
+}
+
+// snapshotJS returns JavaScript that walks the DOM and builds a JSON
+// array of snapshot nodes. This works on any CDP-compatible browser
+// including Lightpanda which does not support Accessibility.getFullAXTree.
+func snapshotJS(filter string) string {
+	interactiveOnly := "false"
+	if filter == "interactive" {
+		interactiveOnly = "true"
 	}
+	return `(function() {
+	var INTERACTIVE_ONLY = ` + interactiveOnly + `;
+	var SKIP_TAGS = {SCRIPT:1,STYLE:1,NOSCRIPT:1,LINK:1,META:1,BR:1,HR:1,SVG:1};
+	var INTERACTIVE_TAGS = {A:1,BUTTON:1,INPUT:1,TEXTAREA:1,SELECT:1,SUMMARY:1};
 
-	// Build parent map for depth calculation.
-	parentMap := make(map[accessibility.NodeID]accessibility.NodeID, len(axNodes))
-	for _, n := range axNodes {
-		for _, childID := range n.ChildIDs {
-			parentMap[childID] = n.NodeID
+	function inferRole(el) {
+		var tag = el.tagName;
+		var role = el.getAttribute && el.getAttribute('role');
+		if (role) return role;
+		switch (tag) {
+			case 'A': return el.href ? 'link' : 'generic';
+			case 'BUTTON': return 'button';
+			case 'INPUT':
+				var t = (el.type || 'text').toLowerCase();
+				if (t === 'submit' || t === 'button') return 'button';
+				if (t === 'checkbox') return 'checkbox';
+				if (t === 'radio') return 'radio';
+				if (t === 'search') return 'searchbox';
+				if (t === 'range') return 'slider';
+				if (t === 'number') return 'spinbutton';
+				return 'textbox';
+			case 'TEXTAREA': return 'textbox';
+			case 'SELECT': return 'combobox';
+			case 'IMG': return 'img';
+			case 'NAV': return 'navigation';
+			case 'MAIN': return 'main';
+			case 'HEADER': return 'banner';
+			case 'FOOTER': return 'contentinfo';
+			case 'ASIDE': return 'complementary';
+			case 'FORM': return 'form';
+			case 'H1': case 'H2': case 'H3': case 'H4': case 'H5': case 'H6': return 'heading';
+			case 'UL': case 'OL': return 'list';
+			case 'LI': return 'listitem';
+			case 'TABLE': return 'table';
+			case 'TR': return 'row';
+			case 'TD': return 'cell';
+			case 'TH': return 'columnheader';
+			case 'DETAILS': return 'group';
+			case 'SUMMARY': return 'button';
+			case 'DIALOG': return 'dialog';
+			case 'ARTICLE': return 'article';
+			default: return 'generic';
 		}
 	}
 
-	depth := func(id accessibility.NodeID) int {
-		d := 0
-		for {
-			pid, ok := parentMap[id]
-			if !ok {
-				return d
+	function getName(el) {
+		var n = el.getAttribute && (el.getAttribute('aria-label') || el.getAttribute('title') || '');
+		if (n) return n;
+		var tag = el.tagName;
+		if (tag === 'IMG') return el.getAttribute('alt') || '';
+		if (tag === 'INPUT' || tag === 'TEXTAREA') return el.getAttribute('placeholder') || '';
+		if (isInteractive(el)) {
+			var t = (el.textContent || '').trim();
+			return t.length > 100 ? t.substring(0,100) + '...' : t;
+		}
+		return '';
+	}
+
+	function isInteractive(el) {
+		if (INTERACTIVE_TAGS[el.tagName]) {
+			if (el.tagName === 'A') return !!el.href;
+			if (el.tagName === 'INPUT' && el.type === 'hidden') return false;
+			return true;
+		}
+		if (el.getAttribute && el.getAttribute('onclick')) return true;
+		var ti = el.getAttribute && el.getAttribute('tabindex');
+		if (ti !== null && ti !== '-1' && ti !== undefined) return true;
+		var r = el.getAttribute && el.getAttribute('role');
+		if (r && {button:1,link:1,tab:1,menuitem:1,switch:1,checkbox:1,radio:1}[r]) return true;
+		return false;
+	}
+
+	function uniqueSelector(el) {
+		if (el.id) return '#' + CSS.escape(el.id);
+		var parts = [];
+		var cur = el;
+		while (cur && cur.nodeType === 1 && cur !== document.body) {
+			var tag = cur.tagName.toLowerCase();
+			var parent = cur.parentElement;
+			if (cur.id) { parts.unshift('#' + CSS.escape(cur.id)); break; }
+			if (parent) {
+				var siblings = parent.children;
+				var sameTag = 0, idx = 0;
+				for (var i = 0; i < siblings.length; i++) {
+					if (siblings[i].tagName === cur.tagName) {
+						sameTag++;
+						if (siblings[i] === cur) idx = sameTag;
+					}
+				}
+				parts.unshift(sameTag > 1 ? tag + ':nth-of-type(' + idx + ')' : tag);
+			} else {
+				parts.unshift(tag);
 			}
-			d++
-			id = pid
+			cur = parent;
 		}
+		return parts.join(' > ');
 	}
 
-	var nodes []SnapshotNode
-	seq := 0
-	for _, n := range axNodes {
-		role := axValueStr(n.Role)
-		if role == "" || role == "none" || role == "InlineTextBox" || role == "LineBreak" {
-			continue
+	var nodes = [];
+	function walk(el, depth) {
+		if (!el || el.nodeType !== 1) return;
+		var tag = el.tagName;
+		if (SKIP_TAGS[tag]) return;
+
+		var role = inferRole(el);
+		var interactive = isInteractive(el);
+
+		if (INTERACTIVE_ONLY && !interactive) {
+			var children = el.children;
+			for (var i = 0; i < children.length; i++) walk(children[i], depth);
+			return;
 		}
 
-		name := axValueStr(n.Name)
-		value := axValueStr(n.Value)
-		interactive := isInteractiveRole(role)
-
-		if filter == "interactive" && !interactive {
-			continue
+		if (role === 'generic' && !interactive) {
+			var name = getName(el);
+			if (!name) {
+				var children = el.children;
+				for (var i = 0; i < children.length; i++) walk(children[i], depth + 1);
+				return;
+			}
 		}
 
-		// Skip generic containers with no name.
-		if role == "generic" && name == "" && !interactive {
-			continue
-		}
+		var node = {
+			role: role,
+			name: getName(el),
+			tag: tag.toLowerCase(),
+			value: '',
+			depth: depth,
+			interactive: interactive,
+			selector: uniqueSelector(el)
+		};
 
-		ref := fmt.Sprintf("e%d", seq)
-		seq++
+		if (tag === 'INPUT' || tag === 'TEXTAREA') node.value = el.value || '';
+		if (tag === 'SELECT') node.value = el.value || '';
 
-		if n.BackendDOMNodeID != 0 {
-			refs[ref] = n.BackendDOMNodeID.Int64()
-		}
-
-		nodes = append(nodes, SnapshotNode{
-			Ref:         ref,
-			Role:        role,
-			Name:        name,
-			Value:       value,
-			Depth:       depth(n.NodeID),
-			Interactive: interactive,
-		})
+		nodes.push(node);
+		var children = el.children;
+		for (var i = 0; i < children.length; i++) walk(children[i], depth + 1);
 	}
 
-	return nodes
+	walk(document.body || document.documentElement, 0);
+	return JSON.stringify(nodes);
+})()
+`
 }
 
-func axValueStr(v *accessibility.Value) string {
-	if v == nil {
-		return ""
-	}
-	// Value.Value is jsontext.Value; unmarshal to get string.
-	var s string
-	if err := json.Unmarshal(v.Value, &s); err != nil {
-		return ""
-	}
-	return s
+// jsonString returns a JSON-encoded string literal safe for embedding in JS.
+func jsonString(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
 }
 
+// isInteractiveRole checks if an ARIA role is interactive (used in tests).
 func isInteractiveRole(role string) bool {
 	switch role {
 	case "button", "link", "textbox", "checkbox", "radio", "combobox",
