@@ -12,18 +12,25 @@ import (
 // removed at runtime (under a write lock) so that the routing strategy can
 // evolve without modifying handlers or bridge code.
 type Router struct {
-	mode  Mode
-	lite  Engine // may be nil when Mode == ModeChrome
-	rules []RouteRule
-	mu    sync.RWMutex
+	mode       Mode
+	lite       Engine // may be nil when Mode == ModeChrome
+	lightpanda Engine // may be nil when Lightpanda is unavailable
+	rules      []RouteRule
+	mu         sync.RWMutex
 }
 
 // NewRouter creates a router for the given mode.
 // Pass nil for lite when running in chrome-only mode.
 func NewRouter(mode Mode, lite Engine) *Router {
+	return NewRouterWithEngines(mode, lite, nil)
+}
+
+// NewRouterWithEngines creates a router with both lite and lightpanda engines.
+func NewRouterWithEngines(mode Mode, lite Engine, lightpanda Engine) *Router {
 	r := &Router{
-		mode: mode,
-		lite: lite,
+		mode:       mode,
+		lite:       lite,
+		lightpanda: lightpanda,
 	}
 
 	switch mode {
@@ -31,6 +38,11 @@ func NewRouter(mode Mode, lite Engine) *Router {
 		r.rules = []RouteRule{
 			CapabilityRule{},  // screenshot/pdf → chrome always
 			DefaultLiteRule{}, // everything else → lite
+		}
+	case ModeLightpanda:
+		r.rules = []RouteRule{
+			CapabilityRule{},        // screenshot/pdf → chrome always
+			DefaultLightpandaRule{}, // everything else → lightpanda
 		}
 	case ModeAuto:
 		r.rules = []RouteRule{
@@ -89,11 +101,22 @@ func (r *Router) Route(op Capability, url string) Engine {
 				return r.lite
 			}
 			// lite unavailable — fall through
+		case UseLightpanda:
+			if r.lightpanda != nil {
+				return r.lightpanda
+			}
+			// lightpanda unavailable — fall through
 		case UseChrome:
 			return nil // nil signals "use chrome bridge"
 		}
 	}
 	return nil // default: chrome
+}
+
+// UseAltEngine returns true when the router would send this operation to
+// a non-Chrome engine (lite or lightpanda).
+func (r *Router) UseAltEngine(op Capability, url string) bool {
+	return r.Route(op, url) != nil
 }
 
 // UseLite returns true when the router would send this operation to the
@@ -105,6 +128,11 @@ func (r *Router) UseLite(op Capability, url string) bool {
 // Lite returns the lite engine (may be nil).
 func (r *Router) Lite() Engine {
 	return r.lite
+}
+
+// Lightpanda returns the lightpanda engine (may be nil).
+func (r *Router) Lightpanda() Engine {
+	return r.lightpanda
 }
 
 // Mode returns the configured engine mode.

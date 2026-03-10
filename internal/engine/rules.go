@@ -5,7 +5,7 @@ package engine
 type RouteRule interface {
 	// Name returns a short human-readable identifier for logging.
 	Name() string
-	// Decide returns UseLite, UseChrome, or Undecided.
+	// Decide returns UseLite, UseChrome, UseLightpanda, or Undecided.
 	Decide(op Capability, url string) Decision
 }
 
@@ -67,4 +67,18 @@ func (DefaultChromeRule) Name() string { return "default-chrome" }
 
 func (DefaultChromeRule) Decide(_ Capability, _ string) Decision {
 	return UseChrome
+}
+
+// DefaultLightpandaRule is a catch-all that sends every remaining DOM operation
+// to the Lightpanda engine. Used when Mode == ModeLightpanda.
+type DefaultLightpandaRule struct{}
+
+func (DefaultLightpandaRule) Name() string { return "default-lightpanda" }
+
+func (DefaultLightpandaRule) Decide(op Capability, _ string) Decision {
+	switch op {
+	case CapNavigate, CapSnapshot, CapText, CapClick, CapType:
+		return UseLightpanda
+	}
+	return Undecided
 }

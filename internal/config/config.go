@@ -70,7 +70,7 @@ type RuntimeConfig struct {
 	// IDPI (Indirect Prompt Injection defense) settings
 	IDPI IDPIConfig
 
-	// Engine mode: "chrome" (default), "lite", or "auto"
+	// Engine mode: "chrome" (default), "lite", "lightpanda", or "auto"
 	Engine string
 
 	// Scheduler settings (dashboard mode only)

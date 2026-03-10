@@ -92,6 +92,15 @@ func (h *Handlers) useLite(op engine.Capability, url string) bool {
 	return h.Router != nil && h.Router.UseLite(op, url)
 }
 
+// altEngine returns the non-Chrome engine that should handle this operation,
+// or nil if Chrome should be used. Works for both lite and lightpanda.
+func (h *Handlers) altEngine(op engine.Capability, url string) engine.Engine {
+	if h.Router == nil {
+		return nil
+	}
+	return h.Router.Route(op, url)
+}
+
 func (h *Handlers) RegisterRoutes(mux *http.ServeMux, doShutdown func()) {
 	mux.HandleFunc("GET /health", h.HandleHealth)
 	mux.HandleFunc("POST /ensure-chrome", h.HandleEnsureChrome)
