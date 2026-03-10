@@ -31,10 +31,13 @@ type lpTab struct {
 
 // LightpandaEngine implements Engine by managing a Lightpanda subprocess
 // and communicating through CDP (Chrome DevTools Protocol) via chromedp.
+// It also supports connecting to an already-running Lightpanda instance
+// (e.g. Docker) via the LIGHTPANDA_WS_URL environment variable.
 type LightpandaEngine struct {
 	binaryPath string
 	cmd        *exec.Cmd
 	port       int
+	externalWS bool // true when connecting to an external/Docker instance
 
 	allocCtx    context.Context
 	allocCancel context.CancelFunc
@@ -46,9 +49,23 @@ type LightpandaEngine struct {
 }
 
 // NewLightpandaEngine creates a Lightpanda-based engine.
-// binaryPath is the path to the lightpanda executable.
-// If empty, it tries to auto-detect from common locations or PATH.
+// If LIGHTPANDA_WS_URL is set, connects to that existing CDP endpoint
+// (e.g. a Docker container) without spawning a subprocess.
+// Otherwise binaryPath is the path to the lightpanda executable;
+// if empty, auto-detected from LIGHTPANDA_BIN, PATH, or common locations.
 func NewLightpandaEngine(binaryPath string) (*LightpandaEngine, error) {
+	// Prefer an already-running external instance (Docker, WSL, remote).
+	if wsURL := os.Getenv("LIGHTPANDA_WS_URL"); wsURL != "" {
+		lp := &LightpandaEngine{
+			tabs:       make(map[string]*lpTab),
+			externalWS: true,
+		}
+		if err := lp.connectExternal(wsURL); err != nil {
+			return nil, fmt.Errorf("lightpanda connect to %s: %w", wsURL, err)
+		}
+		return lp, nil
+	}
+
 	if binaryPath == "" {
 		binaryPath = findLightpandaBinary()
 	}
@@ -66,6 +83,20 @@ func NewLightpandaEngine(binaryPath string) (*LightpandaEngine, error) {
 	}
 
 	return lp, nil
+}
+
+// connectExternal connects to an already-running Lightpanda CDP endpoint.
+// wsURL may be a base address like "ws://127.0.0.1:9222" or a full
+// websocket URL returned by /json/version.
+func (lp *LightpandaEngine) connectExternal(wsURL string) error {
+	// Verify the endpoint is reachable before connecting.
+	if err := waitForCDP(wsURL, 5*time.Second); err != nil {
+		return fmt.Errorf("lightpanda CDP not reachable at %s: %w", wsURL, err)
+	}
+
+	lp.allocCtx, lp.allocCancel = chromedp.NewRemoteAllocator(context.Background(), wsURL)
+	slog.Info("lightpanda connected to external instance", "ws", wsURL)
+	return nil
 }
 
 func (lp *LightpandaEngine) Name() string { return "lightpanda" }
@@ -306,6 +337,11 @@ func (lp *LightpandaEngine) Close() error {
 
 	if lp.allocCancel != nil {
 		lp.allocCancel()
+	}
+
+	// Only kill subprocess if we launched it ourselves.
+	if lp.externalWS {
+		return nil
 	}
 
 	if lp.cmd != nil && lp.cmd.Process != nil {
