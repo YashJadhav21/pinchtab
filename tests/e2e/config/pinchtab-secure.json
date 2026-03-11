@@ -7,7 +7,7 @@
     "extraFlags": "--no-sandbox --disable-dev-shm-usage"
   },
   "instanceDefaults": {
-    "maxTabs": 10,
+    "maxTabs": 2,
     "tabEvictionPolicy": "close_lru"
   },
   "security": {
@@ -18,7 +18,8 @@
       "enabled": true,
       "strictMode": true,
       "allowedDomains": [
-        "internal-test.invalid"
+        "internal-test.invalid",
+        "fixtures"
       ]
     }
   }
